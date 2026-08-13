@@ -3,7 +3,7 @@
 Deterministic planning-engine foundation for the AI Gantt Planner MVP described in
 `docs/AI_Gantt_Planner_Master_Brief_v1.3.md`.
 
-Implemented through Iteration 3:
+Implemented through Iteration 4:
 
 - a React + TypeScript + Vite application shell;
 - a stateless Python/FastAPI application with seed, import, apply, and export APIs;
@@ -21,10 +21,16 @@ Implemented through Iteration 3:
 - stateless `/api/chat` orchestration with fake-provider test coverage;
 - an environment-configured Qwen adapter using the OpenAI-compatible Responses
   API in Yandex AI Studio;
+- a reviewer-facing read-only Frappe Gantt workspace with task details,
+  dependency visualization, scale controls, and pending-impact highlighting;
+- a compact AI drawer integrated with the stateless chat and ChangeSet apply
+  contracts;
+- shared deterministic Excel import entry points, backend-generated export
+  downloads, browser persistence, and demo reset;
+- frontend unit/integration coverage for browser state and API contracts;
 - unit and API tests for this scope.
 
-AI UI, Gantt UI, persistence, Docker, and deployment are
-explicitly deferred to later iterations.
+Docker and deployment are explicitly deferred to later iterations.
 
 ## Requirements
 
@@ -105,6 +111,13 @@ Build and lint:
 cd frontend
 npm run lint
 npm run build
+```
+
+Run the frontend tests:
+
+```powershell
+cd frontend
+npm run test
 ```
 
 ## Excel input contract
