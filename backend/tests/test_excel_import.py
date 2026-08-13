@@ -63,6 +63,31 @@ def test_valid_xlsx_normalizes_headers_and_ignores_extra_columns() -> None:
     assert parsed.rows[0].duration_workdays == 2
 
 
+def test_duplicate_unknown_extra_columns_are_ignored() -> None:
+    content = workbook_bytes(
+        [("Discovery", "Scope", "Anna", 2, None, "first", "second")],
+        headers=(*REQUIRED_COLUMNS, "note", " NOTE "),
+    )
+
+    parsed = parse_xlsx("tasks.xlsx", content)
+
+    assert parsed.issues == ()
+    assert [row.name for row in parsed.rows] == ["Discovery"]
+
+
+def test_duplicate_required_column_is_rejected() -> None:
+    content = workbook_bytes(
+        [("Discovery", "Scope", "Anna", 2, None, "Duplicate name")],
+        headers=(*REQUIRED_COLUMNS, " ЗАДАЧА "),
+    )
+
+    parsed = parse_xlsx("tasks.xlsx", content)
+
+    assert [(issue.code, issue.column) for issue in parsed.issues] == [
+        ("DUPLICATE_COLUMN", "задача")
+    ]
+
+
 def test_only_active_worksheet_is_processed() -> None:
     content = workbook_bytes(
         [("Discovery", None, None, 1, None)], active_second_sheet=True

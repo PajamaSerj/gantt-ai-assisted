@@ -153,7 +153,7 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
         normalized_headers = [_normalize_header(value) for value in header_values]
         header_positions: dict[str, int] = {}
         for position, header in enumerate(normalized_headers):
-            if not header:
+            if header not in REQUIRED_COLUMNS:
                 continue
             if header in header_positions:
                 issues.append(
