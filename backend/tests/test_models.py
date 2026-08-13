@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from app.domain.models import CreatedSource, PlanState, Task
+from app.domain.models import CreatedSource, PlanState, Task, TaskSpec
 
 
 def valid_task_data() -> dict:
@@ -52,6 +52,23 @@ def test_invalid_task_fields_are_rejected(field: str, value) -> None:
     data[field] = value
     with pytest.raises(ValidationError):
         Task(**data)
+
+
+def test_reserved_excel_separator_is_rejected_for_task_and_task_spec() -> None:
+    data = valid_task_data()
+    data["name"] = "Backend; Frontend"
+
+    with pytest.raises(
+        ValidationError, match="reserved as the Excel predecessor separator"
+    ):
+        Task(**data)
+
+    data.pop("start_date")
+    data.pop("end_date")
+    with pytest.raises(
+        ValidationError, match="reserved as the Excel predecessor separator"
+    ):
+        TaskSpec(**data)
 
 
 def test_plan_state_has_only_tasks() -> None:

@@ -3,6 +3,7 @@ from uuid import UUID
 
 from app.domain.errors import (
     DependencyCycleError,
+    DuplicateInternalIdError,
     SelfReferenceError,
     UnknownPredecessorError,
 )
@@ -13,7 +14,7 @@ def task_index(tasks: Iterable[Task]) -> dict[UUID, Task]:
     indexed: dict[UUID, Task] = {}
     for task in tasks:
         if task.internal_id in indexed:
-            raise ValueError(f"Duplicate internal_id: {task.internal_id}")
+            raise DuplicateInternalIdError(task.internal_id)
         indexed[task.internal_id] = task
     return indexed
 

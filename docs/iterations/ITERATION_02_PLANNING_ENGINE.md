@@ -32,6 +32,7 @@ Rules:
 - ignore unknown extra columns;
 - ignore fully blank rows;
 - task name is required and unique;
+- `;` is forbidden in task names because it is reserved as the canonical predecessor separator; escaping/quoting is not supported;
 - duration is a positive integer;
 - description, assignee and predecessors are optional;
 - canonical separator for multiple predecessors is `;`;

@@ -36,3 +36,33 @@ class DependencyCycleError(DomainValidationError):
             "Dependency cycle detected: "
             + " -> ".join(str(task_id) for task_id in self.cycle_path)
         )
+
+
+class DuplicatePublicIdError(DomainValidationError):
+    def __init__(self, duplicate_ids: Sequence[str]) -> None:
+        self.duplicate_ids = tuple(duplicate_ids)
+        super().__init__(
+            "Public TASK-IDs must be unique: " + ", ".join(self.duplicate_ids)
+        )
+
+
+class DuplicateInternalIdError(DomainValidationError):
+    def __init__(self, task_id: UUID) -> None:
+        self.task_id = task_id
+        super().__init__(f"Internal task ID must be unique: {task_id}")
+
+
+class ScheduleValidationError(DomainValidationError):
+    def __init__(self, message: str, task_id: UUID | None = None) -> None:
+        self.task_id = task_id
+        super().__init__(message)
+
+
+class UnknownTaskError(DomainValidationError):
+    def __init__(self, task_id: UUID) -> None:
+        self.task_id = task_id
+        super().__init__(f"Unknown task {task_id}")
+
+
+class InvalidChangeSetError(DomainValidationError):
+    """Raised when a ChangeSet cannot be safely applied."""

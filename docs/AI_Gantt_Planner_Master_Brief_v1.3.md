@@ -167,6 +167,8 @@ TASK-003
 
 В MVP название должно быть уникальным в рамках текущего плана.
 
+Символ `;` запрещён в названии задачи: он зарезервирован как canonical separator для predecessors в Excel. Escaping/quoting syntax в MVP не используется.
+
 ### `assignee`
 
 Обычная строка.
@@ -751,6 +753,8 @@ Backend; Frontend
 ```
 
 То есть несколько predecessors разделяются `;`.
+
+Поскольку escaping/quoting syntax в MVP не используется, символ `;` запрещён в `Task.name`. Это ограничение применяется единообразно при Excel import и во всех create/rename flows с человекочитаемой ошибкой валидации.
 
 После parsing:
 

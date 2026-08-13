@@ -4,12 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-gantt-planner-backend"
-version = "0.1.0"
-description = "Iteration 1 domain and FastAPI foundation for AI Gantt Planner"
+version = "0.2.0"
+description = "Deterministic planning engine for AI Gantt Planner"
 requires-python = ">=3.12"
 dependencies = [
+    "defusedxml>=0.7,<1.0",
     "fastapi>=0.116,<1.0",
+    "openpyxl>=3.1,<4.0",
     "pydantic>=2.11,<3.0",
+    "python-multipart>=0.0.20,<1.0",
     "uvicorn[standard]>=0.35,<1.0",
 ]
 
