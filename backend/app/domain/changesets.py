@@ -171,6 +171,14 @@ class DateNormalization(BaseModel):
     task_public_id: str | None = None
 
 
+class ConfirmationReason(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: str
+    message: str
+    task_public_ids: tuple[str, ...] = ()
+
+
 class ChangeSet(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -181,6 +189,7 @@ class ChangeSet(BaseModel):
     conflicts: tuple[ChangeConflict, ...] = ()
     proposed_impacts: tuple[ProposedImpact, ...] = ()
     date_normalizations: tuple[DateNormalization, ...] = ()
+    confirmation_reasons: tuple[ConfirmationReason, ...] = ()
     status: ChangeSetStatus
     proposed_plan: PlanState | None = None
 
@@ -396,6 +405,49 @@ def _conflict_from_error(
     )
 
 
+def _assignee_confirmation_reasons(
+    source_plan: PlanState,
+    proposed_plan: PlanState,
+    requested_changes: Sequence[RequestedChange],
+) -> tuple[ConfirmationReason, ...]:
+    target_ids = {
+        change.task_id
+        for change in requested_changes
+        if isinstance(change, SetAssigneeChange)
+    }
+    if not target_ids:
+        return ()
+
+    known_assignees = {
+        task.assignee.casefold()
+        for task in source_plan.tasks
+        if task.assignee is not None
+    }
+    new_assignments: dict[str, tuple[str, list[str]]] = {}
+    for task in proposed_plan.tasks:
+        if task.internal_id not in target_ids or task.assignee is None:
+            continue
+        key = task.assignee.casefold()
+        if key in known_assignees:
+            continue
+        display_name, public_ids = new_assignments.setdefault(
+            key, (task.assignee, [])
+        )
+        public_ids.append(task.public_id)
+        new_assignments[key] = (display_name, public_ids)
+
+    return tuple(
+        ConfirmationReason(
+            code="NEW_ASSIGNEE",
+            message=(
+                f"Assignee '{display_name}' is not currently used in the plan"
+            ),
+            task_public_ids=tuple(public_ids),
+        )
+        for display_name, public_ids in new_assignments.values()
+    )
+
+
 def prepare_changeset(
     source_plan: PlanState,
     requested_changes: Sequence[RequestedChange],
@@ -423,6 +475,9 @@ def prepare_changeset(
             proposed_plan=None,
         )
 
+    confirmation_reasons = _assignee_confirmation_reasons(
+        source_plan, proposed_plan, changes
+    )
     affected_ids.update(impact.internal_id for impact in impacts)
     affected_tasks = tuple(
         AffectedTask(
@@ -435,7 +490,7 @@ def prepare_changeset(
     )
     status = (
         ChangeSetStatus.CONFIRMATION_REQUIRED
-        if impacts or normalizations
+        if impacts or normalizations or confirmation_reasons
         else ChangeSetStatus.AUTO_APPLICABLE
     )
     return ChangeSet(
@@ -444,6 +499,7 @@ def prepare_changeset(
         affected_tasks=affected_tasks,
         proposed_impacts=impacts,
         date_normalizations=normalizations,
+        confirmation_reasons=confirmation_reasons,
         status=status,
         proposed_plan=proposed_plan,
     )
@@ -469,6 +525,7 @@ def apply_changeset(
         rebuilt.proposed_plan != changeset.proposed_plan
         or rebuilt.proposed_impacts != changeset.proposed_impacts
         or rebuilt.date_normalizations != changeset.date_normalizations
+        or rebuilt.confirmation_reasons != changeset.confirmation_reasons
         or rebuilt.status != changeset.status
     ):
         raise InvalidChangeSetError("ChangeSet no longer matches deterministic planning")

@@ -8,6 +8,7 @@ from app.domain.calendar import (
     is_working_day,
     next_working_day,
     normalize_to_working_day,
+    shift_working_days,
 )
 
 
@@ -42,6 +43,11 @@ def test_next_working_day_skips_weekend() -> None:
 
 def test_add_working_days_skips_weekend() -> None:
     assert add_working_days(date(2026, 8, 20), 3) == date(2026, 8, 25)
+
+
+def test_shift_working_days_supports_signed_offsets() -> None:
+    assert shift_working_days(date(2026, 8, 24), -1) == date(2026, 8, 21)
+    assert shift_working_days(date(2026, 8, 24), 2) == date(2026, 8, 26)
 
 
 def test_duration_is_inclusive_of_start_date() -> None:

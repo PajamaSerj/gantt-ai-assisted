@@ -32,6 +32,20 @@ def add_working_days(value: date, workdays: int) -> date:
     return result
 
 
+def shift_working_days(value: date, offset: int) -> date:
+    """Shift a date by a signed number of Monday-Friday working days."""
+    if offset >= 0:
+        return add_working_days(value, offset)
+
+    result = normalize_to_working_day(value)
+    remaining = -offset
+    while remaining:
+        result -= ONE_DAY
+        if is_working_day(result):
+            remaining -= 1
+    return result
+
+
 def end_date_for_duration(start_date: date, duration_workdays: int) -> date:
     if duration_workdays < 1:
         raise ValueError("duration_workdays must be positive")

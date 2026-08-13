@@ -7,6 +7,7 @@ from app.domain.changesets import (
     ChangeSetStatus,
     MoveTaskChange,
     RenameTaskChange,
+    SetAssigneeChange,
     SetDurationChange,
     SetPredecessorsChange,
     apply_changeset,
@@ -228,3 +229,31 @@ def test_weekend_move_is_normalized_and_requires_confirmation(task_factory) -> N
     assert changeset.status is ChangeSetStatus.CONFIRMATION_REQUIRED
     assert changeset.date_normalizations[0].normalized_date == date(2026, 8, 24)
     assert changeset.proposed_plan.tasks[0].start_date == date(2026, 8, 24)
+
+
+def test_unseen_assignee_requires_confirmation(task_factory) -> None:
+    task = task_factory(1, name="A").model_copy(update={"assignee": "Anna"})
+    source = scheduled_plan(task_factory, task)
+
+    changeset = prepare_changeset(
+        source,
+        (SetAssigneeChange(task_id=task.internal_id, assignee="Boris"),),
+    )
+
+    assert changeset.status is ChangeSetStatus.CONFIRMATION_REQUIRED
+    assert changeset.confirmation_reasons[0].code == "NEW_ASSIGNEE"
+    assert changeset.proposed_plan.tasks[0].assignee == "Boris"
+
+
+def test_existing_assignee_is_auto_applicable(task_factory) -> None:
+    first = task_factory(1, name="A").model_copy(update={"assignee": "Anna"})
+    second = task_factory(2, name="B")
+    source = scheduled_plan(task_factory, first, second)
+
+    changeset = prepare_changeset(
+        source,
+        (SetAssigneeChange(task_id=second.internal_id, assignee="Anna"),),
+    )
+
+    assert changeset.status is ChangeSetStatus.AUTO_APPLICABLE
+    assert changeset.confirmation_reasons == ()

@@ -3,7 +3,7 @@
 Deterministic planning-engine foundation for the AI Gantt Planner MVP described in
 `docs/AI_Gantt_Planner_Master_Brief_v1.3.md`.
 
-Implemented through Iteration 2:
+Implemented through Iteration 3:
 
 - a React + TypeScript + Vite application shell;
 - a stateless Python/FastAPI application with seed, import, apply, and export APIs;
@@ -16,9 +16,14 @@ Implemented through Iteration 2:
 - Replace/Append planning with atomic validation;
 - transient ChangeSets with final-state batch validation, transitive impact
   analysis, confirmation guard, and apply-time revalidation;
+- real request-scoped MCP server/client execution for plan reads and prepared
+  mutations;
+- stateless `/api/chat` orchestration with fake-provider test coverage;
+- an environment-configured Qwen adapter using the OpenAI-compatible Responses
+  API in Yandex AI Studio;
 - unit and API tests for this scope.
 
-MCP, LLM, `/api/chat`, AI UI, Gantt UI, persistence, Docker, and deployment are
+AI UI, Gantt UI, persistence, Docker, and deployment are
 explicitly deferred to later iterations.
 
 ## Requirements
@@ -32,7 +37,7 @@ explicitly deferred to later iterations.
 cd backend
 python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
-.venv\Scripts\python -m uvicorn app.main:app --reload
+.venv\Scripts\python -m uvicorn app.main:app --reload --env-file ..\.env
 ```
 
 The API is then available at `http://127.0.0.1:8000`.
@@ -46,13 +51,35 @@ Available endpoints:
 - `POST /api/changesets/apply` — current plan, prepared ChangeSet, and explicit
   `apply_all` or `cancel` choice;
 - `POST /api/export` — current `PlanState`, returned as `.xlsx`.
+- `POST /api/chat` — message, current `PlanState`, and stateless conversation
+  context; returns `applied`, `clarification_required`, or
+  `confirmation_required` for normal planning outcomes.
 
 Import always returns the unchanged source plan plus either all validation
 errors or a transient ChangeSet classified as `AUTO_APPLICABLE` or
 `CONFIRMATION_REQUIRED`. Applying reconstructs and revalidates the proposed
 final state; the backend stores no plan or pending ChangeSet.
 
-Run the domain tests:
+### AI provider configuration
+
+Copy `.env.example` to a local `.env` (the command above passes it to Uvicorn)
+or export the same values in the process environment. Local `.env` files are
+ignored by git.
+
+```text
+YANDEX_CLOUD_API_KEY=<service-account API key>
+YANDEX_CLOUD_FOLDER_ID=<AI Studio folder ID>
+AI_MODEL=gpt://<folder ID>/qwen3.6-35b-a3b
+AI_BASE_URL=https://ai.api.cloud.yandex.net/v1
+```
+
+`AI_MODEL` is required and never hardcoded by the backend. There is no automatic
+provider/model fallback. Automated tests inject a fake provider and do not use
+cloud credentials. The model receives conversation text and MCP tool results,
+not the complete `PlanState`; Excel content remains on deterministic
+`POST /api/import`.
+
+Run the backend tests:
 
 ```powershell
 cd backend
