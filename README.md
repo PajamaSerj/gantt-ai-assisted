@@ -75,9 +75,11 @@ AI_BASE_URL=https://ai.api.cloud.yandex.net/v1
 
 `AI_MODEL` is required and never hardcoded by the backend. There is no automatic
 provider/model fallback. Automated tests inject a fake provider and do not use
-cloud credentials. The model receives conversation text and MCP tool results,
-not the complete `PlanState`; Excel content remains on deterministic
-`POST /api/import`.
+cloud credentials; they verify adapter, tool-contract, and orchestration wiring,
+not live-model semantic compliance. Live Qwen behavior must be checked separately
+with local environment configuration. The model receives conversation text and
+MCP tool results, not the complete `PlanState`; Excel content remains on
+deterministic `POST /api/import`.
 
 Run the backend tests:
 

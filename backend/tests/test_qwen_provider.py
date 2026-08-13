@@ -76,3 +76,33 @@ def test_qwen_adapter_uses_responses_api_and_configured_model() -> None:
     assert client.responses.kwargs["parallel_tool_calls"] is False
     assert turn.tool_calls[0].name == "get_task"
     assert turn.tool_calls[0].arguments == {"identifier": "TASK-001"}
+
+
+def test_qwen_provider_sends_approved_semantic_contract() -> None:
+    client = FakeOpenAIClient()
+    provider = QwenProvider(
+        QwenSettings(
+            api_key="test-key",
+            folder_id="test-folder",
+            model="configured-model",
+        ),
+        client=client,
+    )
+
+    asyncio.run(provider.complete(input_items=[], tools=[]))
+
+    instructions = " ".join(client.responses.kwargs["instructions"].split())
+    required_rules = (
+        "N days means signed N working days",
+        "one-week scheduling shift means exactly 5 working days",
+        '"Next week" without a concrete date or weekday is ambiguous',
+        'Plain wording that puts one task "after" another is ambiguous',
+        "An explicit date move uses move_tasks and never creates a dependency",
+        "An explicit dependency request must use add_predecessor",
+        "move_tasks.after_task_identifier only for an explicitly unambiguous relative",
+        "Never invent missing management data",
+        "Date arithmetic, working-day calculations, dependency validation",
+        "TASK-ID generation, and apply authorization",
+    )
+    for rule in required_rules:
+        assert rule in instructions

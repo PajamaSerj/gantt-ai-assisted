@@ -19,18 +19,25 @@ async def call_in_context(
 
 
 def test_official_mcp_client_discovers_all_required_tools() -> None:
-    async def discover() -> tuple[set[str], bool]:
+    async def discover() -> tuple[set[str], bool, str]:
         context = PlanningRequestContext(get_seed_plan())
         with bind_planning_context(context):
             async with PlanningMCPClient() as client:
                 tools = await client.model_tools()
                 names = {tool["name"] for tool in tools}
-                return names, "apply_changes" in names
+                move_description = next(
+                    tool["description"]
+                    for tool in tools
+                    if tool["name"] == "move_tasks"
+                )
+                return names, "apply_changes" in names, move_description
 
-    names, apply_is_model_visible = asyncio.run(discover())
+    names, apply_is_model_visible, move_description = asyncio.run(discover())
 
     assert names == MODEL_TOOL_NAMES
     assert apply_is_model_visible is False
+    assert "only when the user explicitly and unambiguously asks" in move_description
+    assert "may instead mean a dependency request" in move_description
 
 
 def test_read_tools_resolve_public_id_and_unique_name() -> None:

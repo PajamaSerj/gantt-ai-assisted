@@ -276,7 +276,12 @@ async def move_tasks(
     shift_workdays: int | None = None,
     after_task_identifier: str | None = None,
 ) -> dict[str, Any]:
-    """Prepare explicit, signed-working-day, or unambiguous relative task moves."""
+    """Prepare explicit, signed-working-day, or relative date moves.
+
+    Use after_task_identifier only when the user explicitly and unambiguously asks
+    for relative date positioning. Plain wording that puts one task "after" another
+    must be clarified because it may instead mean a dependency request.
+    """
     context = current_planning_context()
     modes = sum(
         value is not None
