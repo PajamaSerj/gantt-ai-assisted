@@ -308,6 +308,29 @@
   background: var(--success);
 }
 
+.toast-stack {
+  position: fixed;
+  z-index: 55;
+  top: 76px;
+  right: clamp(16px, 2.4vw, 34px);
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  margin: 0;
+  background: #fff;
+  box-shadow: 0 14px 38px rgba(15, 23, 42, 0.16);
+  animation: toast-in 180ms ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
 .validation-panel,
 .pending-panel {
   margin-bottom: 12px;
@@ -472,11 +495,6 @@
   border-radius: 8px;
 }
 
-.gantt-stage,
-.gantt-host {
-  min-height: max(470px, calc(100vh - 230px));
-}
-
 .gantt-stage {
   min-width: 0;
   background: #fff;
@@ -488,8 +506,6 @@
 }
 
 .gantt-host .gantt-container {
-  height: auto !important;
-  min-height: max(470px, calc(100vh - 230px));
   overflow-x: auto;
   overflow-y: hidden;
   border-radius: 0;
@@ -594,7 +610,7 @@
 .loading-state,
 .empty-state {
   display: grid;
-  min-height: max(470px, calc(100vh - 230px));
+  min-height: 280px;
   color: var(--muted);
   place-content: center;
   justify-items: center;
@@ -810,10 +826,6 @@
   align-items: center;
   gap: 4px;
   color: var(--muted);
-}
-
-.message.typing span {
-  margin-right: 3px;
 }
 
 .message.typing i {

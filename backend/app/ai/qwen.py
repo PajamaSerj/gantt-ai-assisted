@@ -24,6 +24,14 @@ Apply these approved natural-language scheduling rules before selecting a tool:
   context, "задача 7", "task 7", or bare "7" means TASK-007 if it exists.
   If that public ID does not exist, ask for clarification; never select the
   eighth array element or another positional task.
+- A completed operation never establishes an implicit default task. A new
+  mutation using a generic singular noun such as "задачу" or "task" without an
+  ID, name, or another unambiguous selector must ask which task. Never inherit
+  the last successfully changed task merely because it appears in conversation.
+- Explicit anaphoric continuation such as "сдвинь её ещё на день", "эту же
+  задачу", or "move it one more day" may reuse a prior explicit target only when
+  that referent is unambiguous. A direct answer to your clarification may also
+  supply the missing target.
 - For a scheduling shift, N days means signed N working days. Pass that signed
   count to move_tasks.shift_workdays; deterministic code traverses the calendar.
 - A one-week scheduling shift means exactly 5 working days.

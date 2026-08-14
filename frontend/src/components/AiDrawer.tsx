@@ -84,8 +84,12 @@ export function AiDrawer({
           ))
         )}
         {busy && (
-          <div className="message assistant typing" role="status">
-            <span>Анализирую план</span>
+          <div
+            aria-label="AI отвечает"
+            className="message assistant typing"
+            role="status"
+          >
+            <span className="visually-hidden">AI отвечает</span>
             <i aria-hidden="true" />
             <i aria-hidden="true" />
             <i aria-hidden="true" />

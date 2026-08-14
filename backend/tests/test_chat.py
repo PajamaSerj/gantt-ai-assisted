@@ -50,10 +50,11 @@ def final_turn(message: str = "Готово.") -> ProviderTurn:
     return ProviderTurn(output_text=message)
 
 
-def run_chat(provider, message: str, *, plan=None):
+def run_chat(provider, message: str, *, plan=None, conversation_context=()):
     request = ChatRequest(
         message=message,
         plan=plan or get_seed_plan(),
+        conversation_context=conversation_context,
     )
     return asyncio.run(orchestrate_chat(request, provider))
 
@@ -140,6 +141,109 @@ def test_mass_move_is_one_auto_applicable_batch() -> None:
     assert indexed["TASK-003"].start_date.isoformat() == "2026-02-09"
     assert indexed["TASK-007"].start_date.isoformat() == "2026-03-03"
     assert source.tasks[2].start_date.isoformat() == "2026-02-05"
+
+
+def test_move_success_message_uses_deterministic_workday_and_dates() -> None:
+    source = get_seed_plan()
+
+    def response(provider_message: str):
+        return run_chat(
+            ScriptedProvider(
+                tool_turn(
+                    "move",
+                    "move_tasks",
+                    {"identifiers": ["TASK-007"], "shift_workdays": 1},
+                ),
+                final_turn(provider_message),
+            ),
+            "Сдвинь задачу 7 на день вперёд",
+            plan=source,
+        )
+
+    first = response("Провайдер придумал один ответ.")
+    second = response("Провайдер придумал другой ответ.")
+
+    assert first.status == second.status == "applied"
+    assert first.message == second.message
+    assert first.message == (
+        "Задача 7 перенесена на 1 рабочий день вперёд. "
+        "Новые даты: 2–3 марта."
+    )
+
+
+def test_generic_move_does_not_inherit_last_completed_task_target() -> None:
+    first = run_chat(
+        ScriptedProvider(
+            tool_turn(
+                "move-1",
+                "move_tasks",
+                {"identifiers": ["TASK-007"], "shift_workdays": 1},
+            ),
+            final_turn(),
+        ),
+        "Сдвинь задачу 7 на день вперёд",
+    )
+    second = run_chat(
+        ScriptedProvider(
+            tool_turn(
+                "move-2",
+                "move_tasks",
+                {"identifiers": ["TASK-007"], "shift_workdays": 1},
+            ),
+            final_turn(),
+        ),
+        "Сдвинь задачу 7 на день вперёд",
+        plan=first.plan,
+        conversation_context=first.conversation_context,
+    )
+    generic_provider = ScriptedProvider()
+
+    third = run_chat(
+        generic_provider,
+        "Сдвинь задачу на день вперёд",
+        plan=second.plan,
+        conversation_context=second.conversation_context,
+    )
+
+    assert third.status == "clarification_required"
+    assert third.plan == second.plan
+    assert "TASK-ID или название задачи" in third.message
+    assert generic_provider.requests == []
+
+
+def test_explicit_anaphoric_move_may_reuse_unambiguous_prior_target() -> None:
+    first = run_chat(
+        ScriptedProvider(
+            tool_turn(
+                "move-first",
+                "move_tasks",
+                {"identifiers": ["TASK-007"], "shift_workdays": 1},
+            ),
+            final_turn(),
+        ),
+        "Сдвинь задачу 7 на день вперёд",
+    )
+    provider = ScriptedProvider(
+        tool_turn(
+            "move-again",
+            "move_tasks",
+            {"identifiers": ["TASK-007"], "shift_workdays": 1},
+        ),
+        final_turn(),
+    )
+
+    response = run_chat(
+        provider,
+        "Сдвинь эту же задачу ещё на день",
+        plan=first.plan,
+        conversation_context=first.conversation_context,
+    )
+
+    assert response.status == "applied"
+    assert response.plan.tasks[-1].start_date.isoformat() == "2026-03-03"
+    assert provider.requests[0]["input_items"][-1]["content"] == (
+        "Сдвинь эту же задачу ещё на день"
+    )
 
 
 def test_dependency_shift_returns_consolidated_transitive_confirmation() -> None:

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 
+import { compactTaskReference } from '../gantt-tasks'
 import { buildTaskDetails, formatPlanDate } from '../plan-view'
 import type { PlanState, Task } from '../types'
 
@@ -19,7 +20,7 @@ function RelationList({
     <ul className="relation-list">
       {items.map((item) => (
         <li key={item.publicId}>
-          <span>{item.publicId}</span> {item.name}
+          <span>{compactTaskReference(item.publicId)}</span> · {item.name}
         </li>
       ))}
     </ul>
@@ -78,11 +79,11 @@ export function TaskModal({ plan, task, onClose }: TaskModalProps) {
             <dd>{formatPlanDate(task.end_date)}</dd>
           </div>
           <div>
-            <dt>Предшественники</dt>
+            <dt>Зависит от</dt>
             <dd><RelationList items={details.predecessors} /></dd>
           </div>
           <div>
-            <dt>Последователи</dt>
+            <dt>Влияет на</dt>
             <dd><RelationList items={details.successors} /></dd>
           </div>
         </dl>

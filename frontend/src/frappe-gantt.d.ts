@@ -15,6 +15,8 @@ declare module 'frappe-gantt' {
     readonly_dates?: boolean
     readonly_progress?: boolean
     move_dependencies?: boolean
+    infinite_padding?: boolean
+    language?: string
     scroll_to?: 'today' | 'start' | 'end' | string
     today_button?: boolean
     popup?: false | ((context: unknown) => false | string | void)

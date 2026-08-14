@@ -187,9 +187,13 @@ describe('Iteration 04 integration state', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(seed))
     render(<App />)
 
-    await user.click(screen.getByRole('button', { name: /Восстановить пример/ }))
+    await user.click(screen.getByRole('button', { name: /Восстановить демо/ }))
 
     expect(await screen.findByText(/TASK-001 Исследование продукта/)).toBeInTheDocument()
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Восстановить демо-план? Текущие изменения и история AI будут удалены.',
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('Демо-план восстановлен.')
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}').state
     expect(saved.conversationContext).toEqual([])
     expect(saved.pendingChange).toBeNull()
@@ -203,7 +207,11 @@ describe('Iteration 04 integration state', () => {
     await user.click(screen.getByRole('button', { name: /TASK-002 UX-дизайн/ }))
 
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveTextContent('TASK-001 Исследование продукта')
+    expect(dialog).toHaveTextContent('TASK-002')
+    expect(dialog).toHaveTextContent('Зависит от')
+    expect(dialog).toHaveTextContent('1 · Исследование продукта')
+    expect(dialog).toHaveTextContent('Влияет на')
+    expect(dialog).not.toHaveTextContent('TASK-001')
     expect(dialog).toHaveTextContent('Только просмотр')
     expect(dialog).not.toHaveTextContent('00000000-0000-4000')
   })
@@ -283,7 +291,9 @@ describe('Iteration 04 integration state', () => {
 
     expect(screen.getByText('Покажи быстрый отклик')).toBeInTheDocument()
     expect(composer).toHaveValue('')
-    expect(screen.getByRole('status')).toHaveTextContent('Анализирую план')
+    const waitingStatus = screen.getByRole('status', { name: 'AI отвечает' })
+    expect(waitingStatus).not.toHaveTextContent('Анализирую план')
+    expect(waitingStatus.querySelectorAll('i')).toHaveLength(3)
     await user.click(screen.getByRole('button', { name: /TASK-001/ }))
     expect(screen.getByRole('dialog')).toHaveTextContent('Исследование продукта')
 
@@ -316,14 +326,14 @@ describe('Iteration 04 integration state', () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
       .mockReturnValueOnce(chatRequest)
-      .mockResolvedValueOnce(jsonResponse(makePlan('Восстановленный пример')))
+      .mockResolvedValueOnce(jsonResponse(makePlan('Восстановленный демо-план')))
     render(<App />)
 
     await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
     await user.type(screen.getByLabelText('Сообщение AI-помощнику'), 'Измени план')
     await user.click(screen.getByRole('button', { name: /Отправить/ }))
-    await user.click(screen.getByRole('button', { name: /Восстановить пример/ }))
-    expect(await screen.findByText(/TASK-001 Восстановленный пример/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Восстановить демо/ }))
+    expect(await screen.findByText(/TASK-001 Восстановленный демо-план/)).toBeInTheDocument()
 
     await act(async () => {
       resolveChat(
@@ -339,7 +349,7 @@ describe('Iteration 04 integration state', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(screen.getByText(/TASK-001 Восстановленный пример/)).toBeInTheDocument()
+    expect(screen.getByText(/TASK-001 Восстановленный демо-план/)).toBeInTheDocument()
     expect(screen.queryByText(/Поздний ответ/)).not.toBeInTheDocument()
   })
 
@@ -387,5 +397,30 @@ describe('Iteration 04 integration state', () => {
     expect(screen.getByRole('complementary', { name: 'AI-помощник' })).toBeInTheDocument()
     expect(container.querySelector('.drawer-scrim')).toBeNull()
     expect(screen.queryByLabelText('Открыть AI-помощника')).not.toBeInTheDocument()
+    expect(screen.queryByText('Рабочая область')).not.toBeInTheDocument()
+  })
+
+  it('auto-dismisses a floating success notice after five seconds', async () => {
+    const user = userEvent.setup()
+    const timeoutSpy = vi.spyOn(window, 'setTimeout')
+    stored()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(makePlan()))
+    const { container } = render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /Восстановить демо/ }))
+
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent('Демо-план восстановлен.')
+    expect(container.querySelector('.toast-stack')).not.toBeNull()
+    const timerCall = timeoutSpy.mock.calls.find(([, delay]) => delay === 5_000)
+    expect(timerCall).toBeDefined()
+
+    act(() => {
+      const dismiss = timerCall?.[0]
+      if (typeof dismiss === 'function') dismiss()
+    })
+
+    expect(screen.queryByText('Демо-план восстановлен.')).not.toBeInTheDocument()
   })
 })

@@ -9,6 +9,8 @@ describe('Gantt safety configuration', () => {
       readonly_dates: true,
       readonly_progress: true,
       move_dependencies: false,
+      infinite_padding: false,
+      language: 'ru',
     })
   })
 })

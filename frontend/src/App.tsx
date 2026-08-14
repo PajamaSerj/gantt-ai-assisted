@@ -30,6 +30,7 @@ const EMPTY_STATE: PlannerState = {
 }
 
 const IMPORT_CONFIRMATION_OPTIONS = ['apply_all', 'cancel']
+const SUCCESS_NOTICE_DURATION_MS = 5_000
 
 function initialState(): PlannerState {
   if (typeof window === 'undefined') return EMPTY_STATE
@@ -85,7 +86,7 @@ function App() {
       })
       .catch((requestError: unknown) => {
         if (requestError instanceof Error && requestError.name !== 'AbortError') {
-          setError(`Не удалось загрузить пример плана: ${requestError.message}`)
+          setError(`Не удалось загрузить демо-план: ${requestError.message}`)
         }
       })
       .finally(() => setSeedLoading(false))
@@ -95,6 +96,15 @@ function App() {
   useEffect(() => {
     if (planner.plan) persistPlannerState(window.localStorage, planner)
   }, [planner])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(
+      () => setNotice(null),
+      SUCCESS_NOTICE_DURATION_MS,
+    )
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
   const affectedPublicIds = useMemo(() => {
     const pending = planner.pendingChange?.changeset
@@ -308,7 +318,7 @@ function App() {
   async function restoreDemo() {
     if (restoreBusy) return
     const confirmed = window.confirm(
-      'Восстановить исходный пример плана? Текущие изменения и история AI будут удалены.',
+      'Восстановить демо-план? Текущие изменения и история AI будут удалены.',
     )
     if (!confirmed) return
     clearFeedback()
@@ -323,12 +333,12 @@ function App() {
       setImportFile(null)
       setDrawerOpen(false)
       setScrollToStartToken((value) => value + 1)
-      setNotice('Исходный пример плана восстановлен.')
+      setNotice('Демо-план восстановлен.')
     } catch (requestError) {
       setError(
         requestError instanceof Error
-          ? requestError.message
-          : 'Не удалось восстановить пример плана',
+          ? `Не удалось восстановить демо-план: ${requestError.message}`
+          : 'Не удалось восстановить демо-план',
       )
     } finally {
       setRestoreBusy(false)
@@ -396,7 +406,7 @@ function App() {
             onClick={() => void restoreDemo()}
             disabled={planMutationBusy}
           >
-            ↺ <span>Восстановить пример</span>
+            ↺ <span>Восстановить демо</span>
           </button>
           <button
             className={`ai-toolbar-button ${drawerOpen ? 'active' : ''}`}
@@ -413,7 +423,6 @@ function App() {
         <main className="workspace">
           <section className="workspace-heading" aria-labelledby="plan-title">
             <div>
-              <p className="eyebrow">Рабочая область</p>
               <h2 id="plan-title">План проекта</h2>
             </div>
             <div className="plan-stats" aria-label="Статистика плана">
@@ -432,7 +441,6 @@ function App() {
           </section>
 
           {error && <div className="feedback error" role="alert"><span>!</span>{error}</div>}
-          {notice && <div className="feedback success" role="status"><span>✓</span>{notice}</div>}
           {importIssues.length > 0 && (
             <section className="validation-panel" aria-labelledby="validation-title">
               <div>
@@ -510,6 +518,14 @@ function App() {
           />
         )}
       </div>
+
+      {notice && (
+        <div className="toast-stack" aria-live="polite">
+          <div className="feedback success toast" role="status">
+            <span>✓</span>{notice}
+          </div>
+        </div>
+      )}
 
       {selectedTask && plan && (
         <TaskModal plan={plan} task={selectedTask} onClose={() => setSelectedTask(null)} />
