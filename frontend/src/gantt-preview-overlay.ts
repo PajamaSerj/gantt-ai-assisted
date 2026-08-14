@@ -1,10 +1,7 @@
-import {
-  signedWorkingDayDelta,
-  type PendingPlanPreview,
-  type PendingTaskPreview,
+import type {
+  PendingPlanPreview,
+  PendingTaskPreview,
 } from './pending-preview'
-
-export { signedWorkingDayDelta } from './pending-preview'
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
@@ -21,11 +18,6 @@ export type GanttBarGeometry = {
   y: number
   width: number
   height: number
-}
-
-export type GanttPreviewViewport = {
-  start: number
-  end: number
 }
 
 export type GanttPreviewDirection = 'right' | 'left' | 'resize'
@@ -48,21 +40,7 @@ export type SameRowPreviewGeometry = {
   proposedWidth: number
   proposedHeight: number
   proposedEndX: number
-  showProposedText: boolean
   connector: GanttPreviewConnector | null
-  labelX: number
-  labelY: number
-  labelWidth: number
-  labelHeight: number
-  deltaLabel: string
-  reasonLabel: string
-}
-
-type CurrentLabelGeometry = {
-  x: number
-  y: number
-  text: string
-  insideBar: boolean
 }
 
 type GanttRuntimeGeometry = {
@@ -112,40 +90,6 @@ export function timelineDateX(value: string | Date, scale: GanttDateScale): numb
   )
 }
 
-function abbreviatedWorkingDays(count: number): string {
-  const absolute = Math.abs(count)
-  const modulo100 = absolute % 100
-  const modulo10 = absolute % 10
-  if (modulo10 === 1 && modulo100 !== 11) return 'раб. день'
-  if ([2, 3, 4].includes(modulo10) && ![12, 13, 14].includes(modulo100)) {
-    return 'раб. дня'
-  }
-  return 'раб. дней'
-}
-
-export function previewDeltaLabel(change: PendingTaskPreview): string {
-  const current = change.currentTask
-  const proposed = change.proposedTask
-  if (!current || !proposed) return ''
-  if (current.duration_workdays !== proposed.duration_workdays) {
-    return (
-      `${current.duration_workdays} → ${proposed.duration_workdays} ` +
-      abbreviatedWorkingDays(proposed.duration_workdays)
-    )
-  }
-  const delta = signedWorkingDayDelta(current.start_date, proposed.start_date)
-  const sign = delta > 0 ? '+' : delta < 0 ? '−' : '±'
-  return `${sign}${Math.abs(delta)} ${abbreviatedWorkingDays(delta)}`
-}
-
-export function previewReasonLabel(
-  source: PendingTaskPreview['source'],
-): string {
-  if (source === 'direct') return 'Запрошенное изменение'
-  if (source === 'dependency') return 'Сдвиг из-за зависимости'
-  return 'Связанное изменение'
-}
-
 function rangesOverlap(
   current: GanttBarGeometry,
   proposedX: number,
@@ -157,21 +101,10 @@ function rangesOverlap(
   )
 }
 
-function clamp(value: number, minimum: number, maximum: number): number {
-  if (maximum < minimum) return minimum
-  return Math.min(maximum, Math.max(minimum, value))
-}
-
-function labelWidth(delta: string, reason: string, available: number): number {
-  const estimated = (delta.length + reason.length + 3) * 5.1 + 18
-  return Math.min(Math.max(148, estimated), 232, Math.max(48, available - 8))
-}
-
 export function resolveSameRowPreviewGeometry(
   change: PendingTaskPreview,
   current: GanttBarGeometry,
   dateToX: (value: string | Date) => number,
-  viewport: GanttPreviewViewport,
 ): SameRowPreviewGeometry | null {
   if (change.kind !== 'dates' || !change.currentTask || !change.proposedTask) {
     return null
@@ -195,14 +128,14 @@ export function resolveSameRowPreviewGeometry(
       ? 'right'
       : 'left'
   const overlapsCurrent = rangesOverlap(current, proposedX, proposedEndX)
-  const connectorY = current.y + 5
+  const connectorY = current.y + current.height / 2
   const connectorPadding = 4
-  const minimumConnectorLength = 12
+  const minimumConnectorGap = 20
   let connector: GanttPreviewConnector | null = null
 
   if (direction === 'right') {
     const gap = proposedX - (current.x + current.width)
-    if (gap >= minimumConnectorLength) {
+    if (gap >= minimumConnectorGap) {
       connector = {
         x1: current.x + current.width + connectorPadding,
         x2: proposedX - connectorPadding,
@@ -212,7 +145,7 @@ export function resolveSameRowPreviewGeometry(
     }
   } else if (direction === 'left') {
     const gap = current.x - proposedEndX
-    if (gap >= minimumConnectorLength) {
+    if (gap >= minimumConnectorGap) {
       connector = {
         x1: current.x - connectorPadding,
         x2: proposedEndX + connectorPadding,
@@ -221,19 +154,6 @@ export function resolveSameRowPreviewGeometry(
       }
     }
   }
-
-  const delta = previewDeltaLabel(change)
-  const reason = previewReasonLabel(change.source)
-  const availableWidth = Math.max(0, viewport.end - viewport.start)
-  const width = labelWidth(delta, reason, availableWidth)
-  const preferredX = direction === 'left'
-    ? proposedX - width - 7
-    : proposedEndX + 7
-  const x = clamp(
-    preferredX,
-    viewport.start + 4,
-    viewport.end - width - 4,
-  )
 
   return {
     taskPublicId: change.publicId,
@@ -246,14 +166,7 @@ export function resolveSameRowPreviewGeometry(
     proposedWidth,
     proposedHeight: current.height,
     proposedEndX,
-    showProposedText: proposedWidth >= 128 && !overlapsCurrent,
     connector,
-    labelX: x,
-    labelY: current.y + current.height + 2,
-    labelWidth: width,
-    labelHeight: 16,
-    deltaLabel: delta,
-    reasonLabel: reason,
   }
 }
 
@@ -296,40 +209,9 @@ function connectorArrowPath(connector: GanttPreviewConnector): string {
   return `M ${x2} ${y} L ${x2 + 6} ${y - 4} L ${x2 + 6} ${y + 4} Z`
 }
 
-function timelineWidth(svg: SVGSVGElement): number {
-  const gridRow = svg.querySelector<SVGElement>('.grid-row')
-  const gridWidth = gridRow && numberAttribute(gridRow, 'width')
-  if (gridWidth && gridWidth > 0) return gridWidth
-  const svgWidth = numberAttribute(svg, 'width')
-  if (svgWidth && svgWidth > 0) return svgWidth
-  return svg.viewBox.baseVal.width > 0 ? svg.viewBox.baseVal.width : 0
-}
-
-function visibleViewport(
-  scroller: HTMLElement | null,
-  width: number,
-  proposedX: number,
-  proposedEndX: number,
-  current: GanttBarGeometry,
-): GanttPreviewViewport {
-  if (!scroller || scroller.clientWidth <= 0) return { start: 0, end: width }
-  const visible = {
-    start: Math.max(0, scroller.scrollLeft),
-    end: Math.min(width, scroller.scrollLeft + scroller.clientWidth),
-  }
-  const currentEnd = current.x + current.width
-  const rowIsVisible = (
-    proposedEndX >= visible.start && proposedX <= visible.end
-  ) || (
-    currentEnd >= visible.start && current.x <= visible.end
-  )
-  return rowIsVisible ? visible : { start: 0, end: width }
-}
-
 function renderPreviewItem(
   layer: SVGGElement,
   geometry: SameRowPreviewGeometry,
-  currentLabel: CurrentLabelGeometry | null,
 ): void {
   const item = createSvgElement('g', {
     class: 'gantt-preview-item',
@@ -341,7 +223,10 @@ function renderPreviewItem(
     'data-proposed-y': geometry.proposedY,
   })
   item.appendChild(createSvgElement('rect', {
-    class: 'gantt-preview-proposed-bar',
+    class: [
+      'gantt-preview-proposed-bar',
+      `gantt-preview-proposed-${geometry.source}`,
+    ].join(' '),
     x: geometry.proposedX,
     y: geometry.proposedY,
     width: geometry.proposedWidth,
@@ -374,50 +259,6 @@ function renderPreviewItem(
     }))
   }
 
-  if (geometry.showProposedText) {
-    item.appendChild(createSvgElement('text', {
-      class: 'gantt-preview-proposed-text',
-      x: geometry.proposedX + geometry.proposedWidth / 2,
-      y: geometry.proposedY + geometry.proposedHeight / 2 + 3,
-      'text-anchor': 'middle',
-    }, 'После применения'))
-  }
-
-  if (currentLabel) {
-    item.appendChild(createSvgElement('text', {
-      class: [
-        'gantt-preview-current-label',
-        currentLabel.insideBar ? 'inside' : 'outside',
-      ].join(' '),
-      x: currentLabel.x,
-      y: currentLabel.y,
-    }, currentLabel.text))
-  }
-
-  const label = createSvgElement('g', {
-    class: 'gantt-preview-label',
-    transform: `translate(${geometry.labelX} ${geometry.labelY})`,
-  })
-  label.appendChild(createSvgElement('rect', {
-    class: 'gantt-preview-label-background',
-    width: geometry.labelWidth,
-    height: geometry.labelHeight,
-    rx: 6,
-    ry: 6,
-  }))
-  const deltaPrefix = geometry.showProposedText ? '' : 'После · '
-  label.appendChild(createSvgElement('text', {
-    class: 'gantt-preview-delta',
-    x: 7,
-    y: 11,
-  }, `${deltaPrefix}${geometry.deltaLabel}`))
-  const deltaText = `${deltaPrefix}${geometry.deltaLabel}`
-  label.appendChild(createSvgElement('text', {
-    class: 'gantt-preview-reason',
-    x: Math.min(geometry.labelWidth - 8, 9 + deltaText.length * 5.2),
-    y: 11,
-  }, `· ${geometry.reasonLabel}`))
-  item.appendChild(label)
   layer.appendChild(item)
 }
 
@@ -441,9 +282,6 @@ export function renderGanttPreviewOverlay(
     !runtime.step || !runtime.column_width
   ) return
 
-  const width = timelineWidth(svg)
-  if (width <= 0) return
-  const height = numberAttribute(svg, 'height') ?? Number.POSITIVE_INFINITY
   const scale: GanttDateScale = {
     timelineStart: runtimeChart.gantt_start,
     unit: runtime.unit,
@@ -457,7 +295,6 @@ export function renderGanttPreviewOverlay(
       if (id) groups.set(id, group)
     },
   )
-  const scroller = container.querySelector<HTMLElement>('.gantt-container')
   const layer = createSvgElement('g', {
     class: 'gantt-preview-overlay',
     'aria-hidden': 'true',
@@ -467,45 +304,13 @@ export function renderGanttPreviewOverlay(
   for (const change of preview.changes) {
     const group = groups.get(change.publicId)
     const current = group && barGeometry(group)
-    if (!current || !change.proposedTask) continue
-    const proposedX = timelineDateX(change.proposedTask.start_date, scale)
-    const proposedEndX = timelineDateX(
-      addCalendarDays(parseIsoDate(change.proposedTask.end_date), 1),
-      scale,
-    )
-    const viewport = visibleViewport(
-      scroller,
-      width,
-      proposedX,
-      proposedEndX,
-      current,
-    )
+    if (!current) continue
     const geometry = resolveSameRowPreviewGeometry(
       change,
       current,
       (value) => timelineDateX(value, scale),
-      viewport,
     )
-    if (geometry && geometry.labelY + geometry.labelHeight > height - 12) {
-      geometry.labelY = current.y + (current.height - geometry.labelHeight) / 2
-      geometry.labelX = clamp(
-        Math.min(current.x, geometry.proposedX) - geometry.labelWidth - 7,
-        viewport.start + 4,
-        viewport.end - geometry.labelWidth - 4,
-      )
-    }
-    const sourceLabel = group.querySelector<SVGTextElement>('.bar-label')
-    const labelX = sourceLabel && numberAttribute(sourceLabel, 'x')
-    const labelY = sourceLabel && numberAttribute(sourceLabel, 'y')
-    const currentLabel = (
-      sourceLabel && labelX !== null && labelY !== null && sourceLabel.textContent
-    ) ? {
-        x: labelX,
-        y: labelY,
-        text: sourceLabel.textContent,
-        insideBar: !sourceLabel.classList.contains('big'),
-      } : null
-    if (geometry) renderPreviewItem(layer, geometry, currentLabel)
+    if (geometry) renderPreviewItem(layer, geometry)
   }
 
   if (layer.childElementCount > 0) svg.appendChild(layer)

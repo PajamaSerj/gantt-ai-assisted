@@ -472,13 +472,27 @@ describe('interactive Gantt integration', () => {
     expect(chart.container.querySelector(
       '.gantt-preview-item[data-task-id="TASK-006"]',
     )).toHaveAttribute('data-source', 'dependency')
+    expect(task3Overlay?.querySelector(
+      '.gantt-preview-proposed-bar',
+    )).toHaveClass('gantt-preview-proposed-direct')
+    expect(chart.container.querySelector(
+      '.gantt-preview-item[data-task-id="TASK-006"] ' +
+      '.gantt-preview-proposed-bar',
+    )).toHaveClass('gantt-preview-proposed-dependency')
+    expect(chart.container.querySelectorAll('.bar-label')).toHaveLength(7)
+    expect(chart.container.querySelectorAll(
+      '.gantt-preview-overlay text',
+    )).toHaveLength(0)
     expect(chart.container.querySelectorAll(
       '.gantt-preview-current-label',
-    )).toHaveLength(4)
-    const lastLabel = chart.container.querySelector(
-      '.gantt-preview-item[data-task-id="TASK-007"] .gantt-preview-label',
+    )).toHaveLength(0)
+    expect(chart.container.querySelectorAll('.gantt-preview-label')).toHaveLength(0)
+    expect(chart.container.querySelectorAll('.gantt-preview-delta')).toHaveLength(0)
+    expect(chart.container.querySelectorAll('.gantt-preview-reason')).toHaveLength(0)
+    expect(chart.container.querySelector('svg.gantt')).toHaveAttribute(
+      'height',
+      '459',
     )
-    expect(lastLabel?.getAttribute('transform')).toMatch(/translate\([^ ]+ 415\)/)
     expect(chart.container.querySelector('animate')).not.toBeInTheDocument()
   })
 

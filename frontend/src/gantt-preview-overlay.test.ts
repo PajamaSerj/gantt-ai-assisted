@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  previewDeltaLabel,
-  previewReasonLabel,
-  resolveSameRowPreviewGeometry,
-  signedWorkingDayDelta,
-} from './gantt-preview-overlay'
+import { resolveSameRowPreviewGeometry } from './gantt-preview-overlay'
 import { buildPendingPlanPreview, type PendingTaskPreview } from './pending-preview'
 import { makePlan, makeSergeyPendingScenario } from './test/fixtures'
 
@@ -74,14 +69,15 @@ describe('same-row Gantt preview geometry', () => {
       change,
       currentGeometry(change),
       dateToX,
-      { start: 0, end: 500 },
     )
 
     expect(geometry?.direction).toBe('right')
     expect(geometry?.connector).toMatchObject({ direction: 'right' })
     expect(geometry!.connector!.x1).toBeLessThan(geometry!.connector!.x2)
     expect(geometry?.proposedY).toBe(geometry?.currentY)
-    expect(geometry?.deltaLabel).toBe('+5 раб. дней')
+    expect(geometry?.connector?.y).toBe(
+      currentGeometry(change).y + currentGeometry(change).height / 2,
+    )
   })
 
   it('renders a leftward move with a left-pointing connector', () => {
@@ -90,20 +86,27 @@ describe('same-row Gantt preview geometry', () => {
       change,
       currentGeometry(change),
       dateToX,
-      { start: -200, end: 500 },
     )
 
     expect(geometry?.direction).toBe('left')
     expect(geometry?.connector).toMatchObject({ direction: 'left' })
     expect(geometry!.connector!.x1).toBeGreaterThan(geometry!.connector!.x2)
-    expect(geometry?.deltaLabel).toBe('−8 раб. дней')
   })
 
-  it('uses product-language reasons for direct and propagated changes', () => {
-    expect(previewReasonLabel('direct')).toBe('Запрошенное изменение')
-    expect(previewReasonLabel('dependency')).toBe('Сдвиг из-за зависимости')
-    expect(previewChange('TASK-003').source).toBe('direct')
-    expect(previewChange('TASK-006').source).toBe('dependency')
+  it('retains the source used for solid and dashed outline styles', () => {
+    const direct = previewChange('TASK-003')
+    const dependency = previewChange('TASK-006')
+
+    expect(resolveSameRowPreviewGeometry(
+      direct,
+      currentGeometry(direct),
+      dateToX,
+    )?.source).toBe('direct')
+    expect(resolveSameRowPreviewGeometry(
+      dependency,
+      currentGeometry(dependency),
+      dateToX,
+    )?.source).toBe('dependency')
   })
 
   it('aligns a resize at the current start and emphasizes proposed duration', () => {
@@ -113,13 +116,11 @@ describe('same-row Gantt preview geometry', () => {
       change,
       current,
       dateToX,
-      { start: 0, end: 500 },
     )
 
     expect(geometry?.direction).toBe('resize')
     expect(geometry?.proposedX).toBe(current.x)
     expect(geometry?.proposedWidth).toBeGreaterThan(current.width)
-    expect(geometry?.deltaLabel).toBe('4 → 6 раб. дней')
     expect(geometry?.connector).toBeNull()
   })
 
@@ -130,7 +131,6 @@ describe('same-row Gantt preview geometry', () => {
       change,
       current,
       dateToX,
-      { start: 0, end: 500 },
     )
 
     expect(geometry?.direction).toBe('resize')
@@ -144,44 +144,43 @@ describe('same-row Gantt preview geometry', () => {
       change,
       currentGeometry(change),
       dateToX,
-      { start: 0, end: 500 },
     )
 
     expect(geometry?.direction).toBe('right')
     expect(geometry?.overlapsCurrent).toBe(true)
     expect(geometry?.connector).toBeNull()
-    expect(geometry?.deltaLabel).toBe('+2 раб. дня')
+    expect(geometry?.proposedWidth).toBeGreaterThan(0)
+    expect(geometry?.proposedHeight).toBe(currentGeometry(change).height)
   })
 
-  it('clamps compact labels inside both timeline edges', () => {
-    const leftChange = changedDates('2026-01-26', '2026-01-29', 4)
-    const left = resolveSameRowPreviewGeometry(
-      leftChange,
-      currentGeometry(leftChange),
-      dateToX,
-      { start: -70, end: 180 },
-    )
-    const rightChange = previewChange('TASK-007')
-    const right = resolveSameRowPreviewGeometry(
-      rightChange,
-      currentGeometry(rightChange),
-      dateToX,
-      { start: 220, end: 430 },
-    )
+  it('omits connectors when ranges touch or the visible gap is too small', () => {
+    const touching = changedDates('2026-02-11', '2026-02-16', 4)
+    const shortGap = changedDates('2026-02-12', '2026-02-17', 4)
 
-    expect(left!.labelX).toBeGreaterThanOrEqual(-66)
-    expect(left!.labelX + left!.labelWidth).toBeLessThanOrEqual(176)
-    expect(right!.labelX).toBeGreaterThanOrEqual(224)
-    expect(right!.labelX + right!.labelWidth).toBeLessThanOrEqual(426)
+    expect(resolveSameRowPreviewGeometry(
+      touching,
+      currentGeometry(touching),
+      dateToX,
+    )?.connector).toBeNull()
+    expect(resolveSameRowPreviewGeometry(
+      shortGap,
+      currentGeometry(shortGap),
+      dateToX,
+    )?.connector).toBeNull()
   })
 
-  it('counts signed deltas with the existing Monday-to-Friday calendar', () => {
-    expect(signedWorkingDayDelta('2026-02-20', '2026-02-25')).toBe(3)
-    expect(signedWorkingDayDelta('2026-03-02', '2026-02-27')).toBe(-1)
-    expect(previewDeltaLabel(changedDates(
-      '2026-02-09',
-      '2026-02-12',
-      4,
-    ))).toBe('+2 раб. дня')
+  it('does not reserve any vertical or horizontal geometry for labels', () => {
+    const change = previewChange('TASK-005')
+    const geometry = resolveSameRowPreviewGeometry(
+      change,
+      currentGeometry(change),
+      dateToX,
+    )
+
+    expect(geometry).not.toHaveProperty('labelX')
+    expect(geometry).not.toHaveProperty('labelY')
+    expect(geometry).not.toHaveProperty('labelHeight')
+    expect(geometry).not.toHaveProperty('deltaLabel')
+    expect(geometry).not.toHaveProperty('reasonLabel')
   })
 })

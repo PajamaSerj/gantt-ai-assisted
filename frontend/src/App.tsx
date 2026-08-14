@@ -563,7 +563,8 @@ function App() {
                 {pendingPreview ? (
                   <>
                     <span><i className="legend-dot current" />Текущие даты</span>
-                    <span><i className="legend-dot proposed" />После применения</span>
+                    <span><i className="legend-dot requested" />Запрошенное изменение</span>
+                    <span><i className="legend-dot dependency" />Сдвиг по зависимости</span>
                   </>
                 ) : (
                   <span><i className="legend-dot active" />Задачи</span>

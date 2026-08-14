@@ -502,9 +502,14 @@
   background: #516fa8;
 }
 
-.legend-dot.proposed {
-  background: rgba(217, 130, 43, 0.16);
+.legend-dot.requested,
+.legend-dot.dependency {
+  background: rgba(217, 130, 43, 0.1);
   border: 1.5px solid #d9822b;
+}
+
+.legend-dot.dependency {
+  border-style: dashed;
 }
 
 .view-control {
@@ -663,16 +668,25 @@
 }
 
 .gantt-host .gantt .gantt-preview-proposed-bar {
-  fill: rgba(217, 130, 43, 0.16);
+  fill: rgba(217, 130, 43, 0.1);
   stroke: #d9822b;
-  stroke-width: 2px;
+  stroke-width: 2.2px;
   vector-effect: non-scaling-stroke;
+}
+
+.gantt-host .gantt .gantt-preview-proposed-direct,
+.gantt-host .gantt .gantt-preview-proposed-related {
+  stroke-dasharray: none;
+}
+
+.gantt-host .gantt .gantt-preview-proposed-dependency {
+  stroke-dasharray: 5 3;
 }
 
 .gantt-host .gantt .gantt-preview-item[data-overlap='true']
   .gantt-preview-proposed-bar {
-  fill: rgba(255, 174, 74, 0.23);
-  stroke-width: 2.4px;
+  fill: rgba(255, 174, 74, 0.14);
+  stroke-width: 2.6px;
 }
 
 .gantt-host .gantt .gantt-preview-connector {
@@ -688,53 +702,8 @@
 
 .gantt-host .gantt .gantt-preview-resize-edge {
   stroke: #b95e0d;
-  stroke-width: 3px;
-  vector-effect: non-scaling-stroke;
-}
-
-.gantt-host .gantt .gantt-preview-proposed-text {
-  fill: #8d470a;
-  font-size: 9px;
-  font-weight: 750;
-}
-
-.gantt-host .gantt .gantt-preview-current-label {
-  font-size: 10px;
-  font-weight: 650;
-  paint-order: stroke;
-  stroke-linejoin: round;
   stroke-width: 2.5px;
-}
-
-.gantt-host .gantt .gantt-preview-current-label.inside {
-  fill: #fff;
-  stroke: rgba(81, 111, 168, 0.72);
-}
-
-.gantt-host .gantt .gantt-preview-current-label.outside {
-  fill: #27344a;
-  stroke: rgba(255, 255, 255, 0.94);
-}
-
-.gantt-host .gantt .gantt-preview-label-background {
-  fill: rgba(255, 250, 244, 0.96);
-  stroke: rgba(217, 130, 43, 0.55);
-  stroke-width: 1px;
-}
-
-.gantt-host .gantt .gantt-preview-delta,
-.gantt-host .gantt .gantt-preview-reason {
-  fill: #8d470a;
-  font-size: 9px;
-}
-
-.gantt-host .gantt .gantt-preview-delta {
-  font-weight: 760;
-}
-
-.gantt-host .gantt .gantt-preview-reason {
-  fill: #78583e;
-  font-size: 8.5px;
+  vector-effect: non-scaling-stroke;
 }
 
 .gantt-host .upper-text,
