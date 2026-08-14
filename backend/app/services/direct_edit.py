@@ -1,7 +1,11 @@
 from datetime import date
 from uuid import UUID
 
-from app.domain.calendar import working_days_inclusive
+from app.domain.calendar import (
+    is_working_day,
+    next_working_day,
+    working_days_inclusive,
+)
 from app.domain.changesets import (
     ChangeSet,
     MoveTaskChange,
@@ -21,6 +25,31 @@ def prepare_direct_move(
     return prepare_changeset(
         current_plan,
         (MoveTaskChange(task_id=task_id, start_date=intended_start_date),),
+    )
+
+
+def dependency_bound_move_message(
+    current_plan: PlanState,
+    task_id: UUID,
+    intended_start_date: date,
+) -> str | None:
+    """Explain a direct move that cannot cross the current FS boundary."""
+    indexed = task_index(current_plan.tasks)
+    task = indexed.get(task_id)
+    if task is None:
+        raise UnknownTaskError(task_id)
+    if not task.predecessor_ids or not is_working_day(intended_start_date):
+        return None
+
+    predecessor = max(
+        (indexed[predecessor_id] for predecessor_id in task.predecessor_ids),
+        key=lambda candidate: candidate.end_date,
+    )
+    if intended_start_date >= next_working_day(predecessor.end_date):
+        return None
+    return (
+        "Задача не может начинаться раньше завершения "
+        f"{predecessor.public_id} · {predecessor.name}."
     )
 
 

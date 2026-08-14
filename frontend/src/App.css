@@ -677,6 +677,14 @@
   filter: drop-shadow(0 2px 3px rgba(176, 91, 14, 0.24));
 }
 
+.gantt-host .gantt .gantt-task-preview-proposed .gantt-label-before {
+  text-anchor: end;
+}
+
+.gantt-host .gantt .gantt-task-preview-proposed .gantt-label-contained {
+  text-anchor: start;
+}
+
 .gantt-host .upper-text,
 .gantt-host .lower-text {
   color: #667085;

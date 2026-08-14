@@ -679,6 +679,38 @@ describe('Iteration 04 integration state', () => {
     })
   })
 
+  it('shows a dependency-bound no-op message without creating pending state', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    stored(source)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'INVALID',
+        plan: source,
+        changeset: null,
+        message: (
+          'Задача не может начинаться раньше завершения ' +
+          'TASK-001 · Исследование продукта.'
+        ),
+      }),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', {
+      name: 'Имитировать прямой перенос последней задачи',
+    }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Задача не может начинаться раньше завершения ' +
+      'TASK-001 · Исследование продукта.',
+    )
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-active-task-2-start',
+      source.tasks[1].start_date,
+    )
+  })
+
   it('keeps active dates and reuses pending preview for an impacted drag', async () => {
     const user = userEvent.setup()
     const source = makePlan()

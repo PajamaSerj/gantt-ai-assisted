@@ -11,7 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.domain.changesets import ChangeSet, ChangeSetStatus, apply_changeset
 from app.domain.errors import DomainValidationError, ScheduleValidationError
 from app.domain.models import PlanState
-from app.services.direct_edit import prepare_direct_move, prepare_direct_resize
+from app.services.direct_edit import (
+    dependency_bound_move_message,
+    prepare_direct_move,
+    prepare_direct_resize,
+)
 from app.services.excel_export import export_plan_xlsx
 from app.services.excel_import import ImportIssue
 from app.services.import_planning import ImportMode, prepare_import
@@ -175,6 +179,21 @@ def prepare_direct_edit(
             plan=request.current_plan,
             message="Изменение нельзя применить к текущему плану.",
         )
+    if (
+        isinstance(request.edit, DirectMoveEdit)
+        and changeset.proposed_plan == request.current_plan
+    ):
+        dependency_message = dependency_bound_move_message(
+            request.current_plan,
+            request.edit.task_id,
+            request.edit.intended_start_date,
+        )
+        if dependency_message:
+            return PrepareDirectEditResponse(
+                status=DirectEditStatus.INVALID,
+                plan=request.current_plan,
+                message=dependency_message,
+            )
     if changeset.status is ChangeSetStatus.CONFIRMATION_REQUIRED:
         return PrepareDirectEditResponse(
             status=DirectEditStatus.CONFIRMATION_REQUIRED,

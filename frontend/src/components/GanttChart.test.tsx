@@ -137,6 +137,26 @@ describe('interactive Gantt integration', () => {
     expect(props.onTaskSelect).not.toHaveBeenCalled()
   })
 
+  it('snaps a Friday drag to Monday before emitting the direct-edit intent', () => {
+    const { current } = makeSergeyPendingScenario()
+    const { props } = renderChart({ plan: current })
+
+    act(() => {
+      ganttMock.options?.on_date_change?.(
+        ganttMock.tasks[6],
+        new Date(2026, 1, 28, 12),
+        new Date(2026, 2, 3, 12),
+      )
+      document.dispatchEvent(new MouseEvent('mouseup'))
+    })
+
+    expect(props.onDirectEdit).toHaveBeenCalledWith({
+      type: 'move',
+      task: current.tasks[6],
+      intendedDate: '2026-03-02',
+    })
+  })
+
   it('emits a duration resize from a right-edge end change', () => {
     const { plan, props } = renderChart()
 

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date
 
 import httpx
 
@@ -6,7 +7,7 @@ from app.main import app
 from app.seed.data import get_seed_plan
 
 
-async def post_direct(edit: dict) -> httpx.Response:
+async def post_direct(edit: dict, current_plan=None) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport,
@@ -15,7 +16,9 @@ async def post_direct(edit: dict) -> httpx.Response:
         return await client.post(
             "/api/direct-edits/prepare",
             json={
-                "current_plan": get_seed_plan().model_dump(mode="json"),
+                "current_plan": (current_plan or get_seed_plan()).model_dump(
+                    mode="json"
+                ),
                 "edit": edit,
             },
         )
@@ -86,6 +89,41 @@ def test_direct_move_with_downstream_impacts_returns_pending_changeset() -> None
     ] == ["TASK-006", "TASK-007"]
 
 
+def test_dependency_bound_noop_move_returns_concise_message_without_pending(
+    monkeypatch,
+) -> None:
+    class ExplodingProvider:
+        async def complete(self, *_args, **_kwargs):
+            raise AssertionError("Direct edits must not call the AI provider")
+
+    monkeypatch.setattr(
+        app.state,
+        "ai_provider",
+        ExplodingProvider(),
+        raising=False,
+    )
+
+    response = asyncio.run(
+        post_direct(
+            {
+                "type": "move",
+                "task_id": task_id(7),
+                "intended_start_date": "2026-02-26",
+            }
+        )
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "INVALID"
+    assert body["plan"] == get_seed_plan().model_dump(mode="json")
+    assert body["changeset"] is None
+    assert body["message"] == (
+        "Задача не может начинаться раньше завершения "
+        "TASK-006 · Сквозное тестирование."
+    )
+
+
 def test_weekend_direct_move_uses_existing_normalization_confirmation() -> None:
     response = asyncio.run(
         post_direct(
@@ -110,7 +148,57 @@ def test_weekend_direct_move_uses_existing_normalization_confirmation() -> None:
     ]
 
 
-def test_safe_right_resize_converts_visual_end_to_working_day_duration() -> None:
+def test_explicit_weekend_noop_keeps_existing_normalization_confirmation() -> None:
+    plan = get_seed_plan()
+    tasks = list(plan.tasks)
+    tasks[5] = tasks[5].model_copy(
+        update={"duration_workdays": 5, "end_date": date(2026, 2, 27)}
+    )
+    tasks[6] = tasks[6].model_copy(
+        update={
+            "start_date": date(2026, 3, 2),
+            "end_date": date(2026, 3, 3),
+        }
+    )
+    current_plan = plan.model_copy(update={"tasks": tuple(tasks)})
+
+    response = asyncio.run(
+        post_direct(
+            {
+                "type": "move",
+                "task_id": task_id(7),
+                "intended_start_date": "2026-03-01",
+            },
+            current_plan,
+        )
+    )
+
+    body = response.json()
+    assert body["status"] == "CONFIRMATION_REQUIRED"
+    assert body["changeset"]["date_normalizations"] == [
+        {
+            "context": "task_move",
+            "requested_date": "2026-03-01",
+            "normalized_date": "2026-03-02",
+            "task_public_id": "TASK-007",
+        }
+    ]
+
+
+def test_safe_right_resize_converts_visual_end_to_working_day_duration(
+    monkeypatch,
+) -> None:
+    class ExplodingProvider:
+        async def complete(self, *_args, **_kwargs):
+            raise AssertionError("Direct edits must not call the AI provider")
+
+    monkeypatch.setattr(
+        app.state,
+        "ai_provider",
+        ExplodingProvider(),
+        raising=False,
+    )
+
     response = asyncio.run(
         post_direct(
             {

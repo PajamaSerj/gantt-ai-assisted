@@ -8,6 +8,7 @@ import {
 import {
   directEditIntent,
   disableLeftResizeHandles,
+  keepProposedPreviewLabelsVisible,
   type ProvisionalGanttDates,
 } from '../gantt-interaction'
 import {
@@ -74,7 +75,18 @@ export function GanttChart({
   const pendingDatesRef = useRef<ProvisionalGanttDates | null>(null)
   const suppressClickRef = useRef(false)
   const clickResetTimerRef = useRef<number | null>(null)
+  const labelPlacementFrameRef = useRef<number | null>(null)
   const [viewportWidth, setViewportWidth] = useState(0)
+
+  const schedulePreviewLabelPlacement = (container: HTMLElement) => {
+    if (labelPlacementFrameRef.current !== null) {
+      window.cancelAnimationFrame(labelPlacementFrameRef.current)
+    }
+    labelPlacementFrameRef.current = window.requestAnimationFrame(() => {
+      keepProposedPreviewLabelsVisible(container)
+      labelPlacementFrameRef.current = null
+    })
+  }
 
   useLayoutEffect(() => {
     const container = containerRef.current
@@ -103,6 +115,9 @@ export function GanttChart({
   useEffect(() => () => {
     if (clickResetTimerRef.current !== null) {
       window.clearTimeout(clickResetTimerRef.current)
+    }
+    if (labelPlacementFrameRef.current !== null) {
+      window.cancelAnimationFrame(labelPlacementFrameRef.current)
     }
   }, [])
 
@@ -156,6 +171,7 @@ export function GanttChart({
 
     chartRef.current.change_view_mode(viewModeRef.current, false)
     disableLeftResizeHandles(container)
+    schedulePreviewLabelPlacement(container)
 
     const finishInteraction = () => {
       const provisional = pendingDatesRef.current
@@ -170,6 +186,7 @@ export function GanttChart({
       const previousScrollLeft = scroller?.scrollLeft ?? null
       chartRef.current?.refresh(authoritativeTasks)
       disableLeftResizeHandles(container)
+      schedulePreviewLabelPlacement(container)
       if (scroller && previousScrollLeft !== null) {
         scroller.scrollLeft = previousScrollLeft
       }
@@ -198,6 +215,10 @@ export function GanttChart({
       pendingDatesRef.current = null
       if (scroller) scrollLeftRef.current = scroller.scrollLeft
       chartRef.current = null
+      if (labelPlacementFrameRef.current !== null) {
+        window.cancelAnimationFrame(labelPlacementFrameRef.current)
+        labelPlacementFrameRef.current = null
+      }
       container.replaceChildren()
     }
   }, [
@@ -220,6 +241,7 @@ export function GanttChart({
     if (container) {
       disableLeftResizeHandles(container)
       highlightAffectedArrows(container, affectedPublicIds)
+      schedulePreviewLabelPlacement(container)
     }
   }, [affectedPublicIds, viewMode])
 
