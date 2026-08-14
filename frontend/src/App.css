@@ -620,6 +620,11 @@
   cursor: pointer;
 }
 
+.gantt-host.gantt-direct-edit-busy .gantt .bar-wrapper,
+.gantt-host.gantt-transient-disabled .gantt .bar-wrapper {
+  pointer-events: none;
+}
+
 .gantt-host .gantt .holiday-highlight {
   pointer-events: none;
 }

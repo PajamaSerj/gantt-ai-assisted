@@ -51,6 +51,10 @@ declare module 'frappe-gantt' {
       options?: GanttOptions,
     )
     refresh(tasks: GanttTask[]): void
+    update_task(
+      id: string,
+      details: Partial<GanttTask> & { _start?: Date; _end?: Date },
+    ): void
     change_view_mode(viewMode: string, maintainPosition?: boolean): void
   }
 }

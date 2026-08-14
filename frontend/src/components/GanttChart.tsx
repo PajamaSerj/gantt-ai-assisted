@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import Gantt from 'frappe-gantt'
+import Gantt, { type GanttTask } from 'frappe-gantt'
 
 import {
   GANTT_SAFETY_OPTIONS,
@@ -20,6 +20,9 @@ import {
   ganttTaskBounds,
   ganttTimelinePlan,
   ganttViewModes,
+  projectTimelineBounds,
+  timelineSizing,
+  type GanttViewName,
 } from '../gantt-timeline'
 import type { PendingPlanPreview } from '../pending-preview'
 import type { DirectEditIntent, PlanState, Task } from '../types'
@@ -35,7 +38,93 @@ type GanttChartProps = {
   interactionDisabled: boolean
   interactionBusy: boolean
   onTaskSelect: (task: Task) => void
-  onDirectEdit: (intent: DirectEditIntent) => void
+  onDirectEdit: (intent: DirectEditIntent) => void | Promise<void>
+}
+
+type GanttTaskSnapshot = Pick<
+  GanttTask,
+  'id' | 'name' | 'start' | 'end' | 'dependencies' | 'custom_class'
+>
+
+type DirectEditSession = {
+  taskPublicId: string
+}
+
+type GanttWithArrows = Gantt & {
+  arrows?: Array<{ update: () => void }>
+}
+
+function taskSnapshot(task: GanttTask): GanttTaskSnapshot {
+  const runtimeDependencies = task.dependencies as string | string[] | undefined
+  return {
+    id: task.id,
+    name: task.name,
+    start: task.start,
+    end: task.end,
+    dependencies: Array.isArray(runtimeDependencies)
+      ? runtimeDependencies.join(', ')
+      : runtimeDependencies ?? '',
+    custom_class: task.custom_class,
+  }
+}
+
+function taskSnapshotMap(tasks: GanttTask[]): Map<string, GanttTaskSnapshot> {
+  return new Map(tasks.map((task) => [task.id, taskSnapshot(task)]))
+}
+
+function taskDataSignature(tasks: GanttTask[]): string {
+  return JSON.stringify(tasks.map(taskSnapshot))
+}
+
+function chartLayoutSignature(
+  tasks: GanttTask[],
+  timelinePlan: PlanState,
+  viewportWidth: number,
+  viewMode: GanttViewName,
+): string {
+  return JSON.stringify({
+    rows: tasks.map((task) => ({
+      id: task.id,
+      dependencies: task.dependencies ?? '',
+      customClass: task.custom_class ?? '',
+    })),
+    timeline: {
+      viewMode,
+      bounds: projectTimelineBounds(timelinePlan, viewMode),
+      sizing: timelineSizing(timelinePlan, viewMode, viewportWidth),
+    },
+  })
+}
+
+function frappeDate(value: string, exclusiveEnd = false): Date {
+  const [year, month, day] = value.split('-').map(Number)
+  const result = new Date(year, month - 1, day)
+  if (exclusiveEnd) result.setDate(result.getDate() + 1)
+  return result
+}
+
+function settleGanttRendering(container: HTMLElement): void {
+  container.querySelectorAll('animate').forEach((animation) => animation.remove())
+  disableLeftResizeHandles(container)
+}
+
+function reconcileGanttTasks(
+  chart: Gantt,
+  container: HTMLElement,
+  tasks: GanttTask[],
+): void {
+  tasks.forEach((task) => {
+    chart.update_task(task.id, {
+      name: task.name,
+      start: task.start,
+      end: task.end,
+      _start: frappeDate(task.start),
+      _end: frappeDate(task.end, true),
+    })
+  })
+  const runtimeChart = chart as GanttWithArrows
+  runtimeChart.arrows?.forEach((arrow) => arrow.update())
+  settleGanttRendering(container)
 }
 
 function highlightAffectedArrows(
@@ -69,6 +158,14 @@ export function GanttChart({
 }: GanttChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Gantt | null>(null)
+  const taskByGanttIdRef = useRef(new Map<string, Task>())
+  const renderedTasksRef = useRef(new Map<string, GanttTaskSnapshot>())
+  const renderedDataSignatureRef = useRef<string | null>(null)
+  const latestTasksRef = useRef<GanttTask[]>([])
+  const latestTimelinePlanRef = useRef(plan)
+  const latestDataSignatureRef = useRef('')
+  const latestAffectedPublicIdsRef = useRef(affectedPublicIds)
+  const latestViewportWidthRef = useRef(0)
   const viewModeRef = useRef(viewMode)
   const scrollLeftRef = useRef<number | null>(null)
   const scrollTokenRef = useRef<number | null>(null)
@@ -76,7 +173,49 @@ export function GanttChart({
   const suppressClickRef = useRef(false)
   const clickResetTimerRef = useRef<number | null>(null)
   const labelPlacementFrameRef = useRef<number | null>(null)
+  const directEditCompletionFrameRef = useRef<number | null>(null)
+  const directEditSessionRef = useRef<DirectEditSession | null>(null)
+  const directEditPendingRef = useRef(false)
+  const mountedRef = useRef(true)
+  const interactionDisabledRef = useRef(interactionDisabled)
+  const interactionBusyRef = useRef(interactionBusy)
+  const previewRef = useRef(preview)
+  const onTaskSelectRef = useRef(onTaskSelect)
+  const onDirectEditRef = useRef(onDirectEdit)
   const [viewportWidth, setViewportWidth] = useState(0)
+
+  interactionDisabledRef.current = interactionDisabled
+  interactionBusyRef.current = interactionBusy
+  previewRef.current = preview
+  viewModeRef.current = viewMode
+  onTaskSelectRef.current = onTaskSelect
+  onDirectEditRef.current = onDirectEdit
+
+  const tasks = preview
+    ? ganttPreviewTasks(preview)
+    : ganttTasks(plan, affectedPublicIds)
+  latestTasksRef.current = tasks
+  const timelinePlan = ganttTimelinePlan(
+    plan,
+    preview?.proposedPlan ?? null,
+  )
+  const dataSignature = taskDataSignature(tasks)
+  const layoutSignature = chartLayoutSignature(
+    tasks,
+    timelinePlan,
+    viewportWidth,
+    viewMode,
+  )
+  latestTimelinePlanRef.current = timelinePlan
+  latestDataSignatureRef.current = dataSignature
+  latestAffectedPublicIdsRef.current = affectedPublicIds
+  latestViewportWidthRef.current = viewportWidth
+  const byGanttId = new Map<string, Task>()
+  plan.tasks.forEach((task) => {
+    byGanttId.set(task.public_id, task)
+    byGanttId.set(currentPreviewTaskId(task.public_id), task)
+  })
+  taskByGanttIdRef.current = byGanttId
 
   const schedulePreviewLabelPlacement = (container: HTMLElement) => {
     if (labelPlacementFrameRef.current !== null) {
@@ -112,40 +251,37 @@ export function GanttChart({
     return () => observer.disconnect()
   }, [])
 
-  useEffect(() => () => {
-    if (clickResetTimerRef.current !== null) {
-      window.clearTimeout(clickResetTimerRef.current)
-    }
-    if (labelPlacementFrameRef.current !== null) {
-      window.cancelAnimationFrame(labelPlacementFrameRef.current)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (clickResetTimerRef.current !== null) {
+        window.clearTimeout(clickResetTimerRef.current)
+      }
+      if (labelPlacementFrameRef.current !== null) {
+        window.cancelAnimationFrame(labelPlacementFrameRef.current)
+      }
+      if (directEditCompletionFrameRef.current !== null) {
+        window.cancelAnimationFrame(directEditCompletionFrameRef.current)
+      }
     }
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const tasks = preview
-      ? ganttPreviewTasks(preview)
-      : ganttTasks(plan, affectedPublicIds)
-    if (tasks.length === 0) return
-    const timelinePlan = ganttTimelinePlan(
-      plan,
-      preview?.proposedPlan ?? null,
-    )
-    const taskBounds = ganttTaskBounds(tasks)
-    const byGanttId = new Map<string, Task>()
-    plan.tasks.forEach((task) => {
-      byGanttId.set(task.public_id, task)
-      byGanttId.set(currentPreviewTaskId(task.public_id), task)
-    })
+    const renderedTasks = latestTasksRef.current
+    if (renderedTasks.length === 0) return
+    const taskBounds = ganttTaskBounds(renderedTasks)
     const forcePlanStart = scrollTokenRef.current !== scrollToStartToken
-    chartRef.current = new Gantt(container, tasks, {
+    chartRef.current = new Gantt(container, renderedTasks, {
       ...GANTT_SAFETY_OPTIONS,
-      ...ganttInteractionOptions(
-        interactionDisabled || interactionBusy || Boolean(preview),
-      ),
+      ...ganttInteractionOptions(Boolean(previewRef.current)),
       view_mode: viewModeRef.current,
-      view_modes: ganttViewModes(timelinePlan, viewportWidth),
+      view_modes: ganttViewModes(
+        latestTimelinePlanRef.current,
+        latestViewportWidthRef.current,
+      ),
       scroll_to: taskBounds?.start || 'start',
       today_button: false,
       popup: false,
@@ -154,12 +290,15 @@ export function GanttChart({
       padding: 20,
       on_click: (selected) => {
         if (suppressClickRef.current) return
-        const task = byGanttId.get(selected.id)
-        if (task) onTaskSelect(task)
+        const task = taskByGanttIdRef.current.get(selected.id)
+        if (task) onTaskSelectRef.current(task)
       },
       on_date_change: (selected, start, end) => {
-        if (interactionDisabled || interactionBusy || preview) return
-        if (!byGanttId.has(selected.id)) return
+        if (
+          interactionDisabledRef.current || interactionBusyRef.current ||
+          directEditPendingRef.current || previewRef.current
+        ) return
+        if (!taskByGanttIdRef.current.has(selected.id)) return
         pendingDatesRef.current = {
           taskPublicId: selected.id,
           start,
@@ -170,27 +309,57 @@ export function GanttChart({
     })
 
     chartRef.current.change_view_mode(viewModeRef.current, false)
-    disableLeftResizeHandles(container)
+    settleGanttRendering(container)
     schedulePreviewLabelPlacement(container)
+    renderedTasksRef.current = taskSnapshotMap(renderedTasks)
+    renderedDataSignatureRef.current = latestDataSignatureRef.current
 
     const finishInteraction = () => {
       const provisional = pendingDatesRef.current
       if (!provisional) return
       pendingDatesRef.current = null
-      const task = byGanttId.get(provisional.taskPublicId)
+      const task = taskByGanttIdRef.current.get(provisional.taskPublicId)
       if (!task) return
       const intent = directEditIntent(task, provisional)
-      const authoritativeTasks = preview
-        ? ganttPreviewTasks(preview)
-        : ganttTasks(plan, affectedPublicIds)
-      const previousScrollLeft = scroller?.scrollLeft ?? null
-      chartRef.current?.refresh(authoritativeTasks)
-      disableLeftResizeHandles(container)
-      schedulePreviewLabelPlacement(container)
-      if (scroller && previousScrollLeft !== null) {
-        scroller.scrollLeft = previousScrollLeft
+      if (intent) {
+        directEditSessionRef.current = { taskPublicId: task.public_id }
+        directEditPendingRef.current = true
+        container.classList.add('gantt-direct-edit-busy')
+        const completion = onDirectEditRef.current(intent)
+        void Promise.resolve(completion).finally(() => {
+          if (!mountedRef.current) return
+          if (directEditCompletionFrameRef.current !== null) {
+            window.cancelAnimationFrame(directEditCompletionFrameRef.current)
+          }
+          directEditCompletionFrameRef.current = window.requestAnimationFrame(
+            () => {
+              const session = directEditSessionRef.current
+              const currentChart = chartRef.current
+              const currentContainer = containerRef.current
+              if (
+                session && currentChart && currentContainer &&
+                !previewRef.current
+              ) {
+                const authoritativeTask = latestTasksRef.current.find(
+                  (candidate) => candidate.id === session.taskPublicId,
+                )
+                if (authoritativeTask) {
+                  reconcileGanttTasks(
+                    currentChart,
+                    currentContainer,
+                    [authoritativeTask],
+                  )
+                  schedulePreviewLabelPlacement(currentContainer)
+                }
+              }
+              directEditSessionRef.current = null
+              directEditPendingRef.current = false
+              currentContainer?.classList.remove('gantt-direct-edit-busy')
+              directEditCompletionFrameRef.current = null
+            },
+          )
+        })
       }
-      if (intent) onDirectEdit(intent)
       if (clickResetTimerRef.current !== null) {
         window.clearTimeout(clickResetTimerRef.current)
       }
@@ -207,7 +376,7 @@ export function GanttChart({
       scroller.scrollLeft = scrollLeftRef.current
     }
     scrollTokenRef.current = scrollToStartToken
-    highlightAffectedArrows(container, affectedPublicIds)
+    highlightAffectedArrows(container, latestAffectedPublicIdsRef.current)
 
     return () => {
       document.removeEventListener('mouseup', finishInteraction)
@@ -215,35 +384,34 @@ export function GanttChart({
       pendingDatesRef.current = null
       if (scroller) scrollLeftRef.current = scroller.scrollLeft
       chartRef.current = null
+      renderedTasksRef.current = new Map()
+      renderedDataSignatureRef.current = null
       if (labelPlacementFrameRef.current !== null) {
         window.cancelAnimationFrame(labelPlacementFrameRef.current)
         labelPlacementFrameRef.current = null
       }
       container.replaceChildren()
     }
-  }, [
-    affectedPublicIds,
-    interactionBusy,
-    interactionDisabled,
-    onDirectEdit,
-    onTaskSelect,
-    plan,
-    preview,
-    scrollToStartToken,
-    viewportWidth,
-  ])
+  }, [layoutSignature, scrollToStartToken])
 
-  useEffect(() => {
-    if (viewModeRef.current === viewMode) return
-    viewModeRef.current = viewMode
-    chartRef.current?.change_view_mode(viewMode, false)
+  useLayoutEffect(() => {
+    const chart = chartRef.current
     const container = containerRef.current
-    if (container) {
-      disableLeftResizeHandles(container)
-      highlightAffectedArrows(container, affectedPublicIds)
-      schedulePreviewLabelPlacement(container)
-    }
-  }, [affectedPublicIds, viewMode])
+    if (
+      !chart || !container ||
+      renderedDataSignatureRef.current === dataSignature
+    ) return
+    const previousTasks = renderedTasksRef.current
+    const currentTasks = latestTasksRef.current
+    const changedTasks = currentTasks.filter((task) => (
+      JSON.stringify(previousTasks.get(task.id)) !==
+      JSON.stringify(taskSnapshot(task))
+    ))
+    reconcileGanttTasks(chart, container, changedTasks)
+    schedulePreviewLabelPlacement(container)
+    renderedTasksRef.current = taskSnapshotMap(currentTasks)
+    renderedDataSignatureRef.current = dataSignature
+  }, [dataSignature, layoutSignature])
 
   if (plan.tasks.length === 0 && !preview?.proposedPlan.tasks.length) {
     return (
@@ -256,7 +424,14 @@ export function GanttChart({
 
   return (
     <div
-      className={`gantt-host ${interactionDisabled || interactionBusy ? 'gantt-interaction-disabled' : 'gantt-interactive'}`}
+      className={[
+        'gantt-host',
+        interactionDisabled || interactionBusy
+          ? 'gantt-interaction-disabled'
+          : 'gantt-interactive',
+        interactionBusy ? 'gantt-direct-edit-busy' : '',
+        interactionDisabled && !preview ? 'gantt-transient-disabled' : '',
+      ].filter(Boolean).join(' ')}
       ref={containerRef}
       data-testid="gantt-chart"
       data-viewport-width={viewportWidth}
