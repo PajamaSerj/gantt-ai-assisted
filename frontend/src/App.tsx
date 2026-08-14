@@ -7,6 +7,7 @@ import {
   exportWorkbook,
   fetchSeed,
   importWorkbook,
+  prepareDirectEdit,
   sendChat,
 } from './api'
 import { AiDrawer } from './components/AiDrawer'
@@ -18,6 +19,7 @@ import { buildPendingPlanPreview } from './pending-preview'
 import { loadPlannerState, persistPlannerState } from './storage'
 import type {
   ChatResponse,
+  DirectEditIntent,
   ImportIssue,
   PendingChange,
   PlannerState,
@@ -63,6 +65,7 @@ function App() {
   const [applyBusy, setApplyBusy] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
+  const [directEditBusy, setDirectEditBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [importIssues, setImportIssues] = useState<ImportIssue[]>([])
@@ -75,6 +78,7 @@ function App() {
   const [scrollToStartToken, setScrollToStartToken] = useState(1)
   const toolbarFileRef = useRef<HTMLInputElement>(null)
   const chatRequestRef = useRef(0)
+  const directEditRequestRef = useRef(0)
 
   useEffect(() => {
     if (planner.plan) return
@@ -136,7 +140,10 @@ function App() {
   }
 
   async function submitChat() {
-    if (!planner.plan || planner.pendingChange || !message.trim() || chatBusy) return
+    if (
+      !planner.plan || planner.pendingChange || !message.trim() || chatBusy ||
+      directEditBusy
+    ) return
     const outgoing = message.trim()
     const requestedPlan = planner.plan
     const requestedPlanFingerprint = planFingerprint(requestedPlan)
@@ -204,7 +211,10 @@ function App() {
   }
 
   function beginImport(file: File) {
-    if (planner.pendingChange || chatBusy || importBusy || applyBusy || restoreBusy) return
+    if (
+      planner.pendingChange || chatBusy || importBusy || applyBusy ||
+      restoreBusy || directEditBusy
+    ) return
     clearFeedback()
     setExcelMenuOpen(false)
     setImportFile(file)
@@ -215,7 +225,10 @@ function App() {
     mode: 'replace' | 'append',
     dateConstraint: string,
   ) {
-    if (!planner.plan || planner.pendingChange || chatBusy || importBusy) return
+    if (
+      !planner.plan || planner.pendingChange || chatBusy || importBusy ||
+      directEditBusy
+    ) return
     clearFeedback()
     setImportBusy(true)
     try {
@@ -305,6 +318,73 @@ function App() {
     setError(null)
   }
 
+  const submitDirectEdit = useCallback(async (intent: DirectEditIntent) => {
+    if (
+      !planner.plan || planner.pendingChange || chatBusy || importBusy ||
+      applyBusy || restoreBusy || directEditBusy
+    ) return
+    const requestedPlan = planner.plan
+    const requestedFingerprint = planFingerprint(requestedPlan)
+    const requestId = directEditRequestRef.current + 1
+    directEditRequestRef.current = requestId
+    setError(null)
+    setNotice(null)
+    setImportIssues([])
+    setSelectedTask(null)
+    setDirectEditBusy(true)
+    try {
+      const response = await prepareDirectEdit(requestedPlan, intent)
+      if (directEditRequestRef.current !== requestId) return
+      if (response.status === 'INVALID') {
+        setError(response.message)
+        return
+      }
+      if (response.status === 'CONFIRMATION_REQUIRED') {
+        if (!response.changeset) {
+          throw new Error('Backend не вернул подготовленный ChangeSet')
+        }
+        const pending: PendingChange = {
+          changeset: response.changeset,
+          message: response.message,
+          availableOptions: ['apply_all', 'cancel'],
+          source: 'direct',
+        }
+        setPlanner((current) =>
+          planFingerprint(current.plan) === requestedFingerprint
+            ? { ...current, pendingChange: pending }
+            : current,
+        )
+        return
+      }
+      setPlanner((current) =>
+        planFingerprint(current.plan) === requestedFingerprint
+          ? { ...current, plan: response.plan, pendingChange: null }
+          : current,
+      )
+      setNotice(
+        intent.type === 'move'
+          ? 'Новая дата задачи применена.'
+          : 'Новая длительность задачи применена.',
+      )
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'Не удалось подготовить изменение задачи',
+      )
+    } finally {
+      if (directEditRequestRef.current === requestId) setDirectEditBusy(false)
+    }
+  }, [
+    applyBusy,
+    chatBusy,
+    directEditBusy,
+    importBusy,
+    planner.pendingChange,
+    planner.plan,
+    restoreBusy,
+  ])
+
   async function runExport() {
     if (!planner.plan || exportBusy) return
     clearFeedback()
@@ -325,7 +405,7 @@ function App() {
   }
 
   async function restoreDemo() {
-    if (restoreBusy) return
+    if (restoreBusy || directEditBusy) return
     const confirmed = window.confirm(
       'Восстановить демо-план? Текущие изменения и история AI будут удалены.',
     )
@@ -355,7 +435,7 @@ function App() {
   }
 
   const plan = planner.plan
-  const planMutationBusy = importBusy || applyBusy || restoreBusy
+  const planMutationBusy = importBusy || applyBusy || restoreBusy || directEditBusy
   const excelDisabled =
     !plan || planMutationBusy || chatBusy || Boolean(planner.pendingChange)
 
@@ -510,13 +590,24 @@ function App() {
                   affectedPublicIds={affectedPublicIds}
                   viewMode={viewMode}
                   scrollToStartToken={scrollToStartToken}
+                  interactionDisabled={
+                    chatBusy || importBusy || applyBusy || restoreBusy ||
+                    Boolean(planner.pendingChange)
+                  }
+                  interactionBusy={directEditBusy}
                   onTaskSelect={selectTask}
+                  onDirectEdit={submitDirectEdit}
                 />
+              )}
+              {directEditBusy && (
+                <div className="gantt-edit-status" role="status">
+                  <span /> Проверяем изменение…
+                </div>
               )}
             </div>
             <div className="gantt-footer">
               <span>Горизонтальная прокрутка перемещает временную шкалу</span>
-              <span>Нажмите задачу, чтобы открыть детали</span>
+              <span>Перетащите задачу или измените длительность за правый край</span>
             </div>
           </section>
         </main>
@@ -525,6 +616,7 @@ function App() {
           <AiDrawer
             open
             busy={chatBusy}
+            mutationLocked={directEditBusy}
             pending={planner.pendingChange}
             messages={planner.conversationContext}
             message={message}

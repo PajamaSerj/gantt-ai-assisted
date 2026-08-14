@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 
 import App from './App'
 import { persistPlannerState, STORAGE_KEY } from './storage'
+import type { DirectEditIntent } from './types'
 import {
   jsonResponse,
   makeChangeSet,
@@ -12,13 +13,28 @@ import {
 } from './test/fixtures'
 
 vi.mock('./components/GanttChart', () => ({
-  GanttChart: ({ plan, preview, onTaskSelect }: {
+  GanttChart: ({
+    plan,
+    preview,
+    interactionDisabled,
+    interactionBusy,
+    onTaskSelect,
+    onDirectEdit,
+  }: {
     plan: ReturnType<typeof makePlan>
     preview: { proposedPlan: ReturnType<typeof makePlan>; changes: unknown[] } | null
+    interactionDisabled: boolean
+    interactionBusy: boolean
     onTaskSelect: (task: ReturnType<typeof makePlan>['tasks'][number]) => void
+    onDirectEdit: (intent: DirectEditIntent) => void
   }) => (
     <div
+      data-active-task-1-duration={plan.tasks.find((task) => task.public_id === 'TASK-001')?.duration_workdays}
+      data-active-task-1-start={plan.tasks.find((task) => task.public_id === 'TASK-001')?.start_date}
+      data-active-task-2-duration={plan.tasks.find((task) => task.public_id === 'TASK-002')?.duration_workdays}
+      data-active-task-2-start={plan.tasks.find((task) => task.public_id === 'TASK-002')?.start_date}
       data-active-task-3-start={plan.tasks.find((task) => task.public_id === 'TASK-003')?.start_date}
+      data-interaction-disabled={interactionDisabled || interactionBusy}
       data-preview-count={preview?.changes.length}
       data-preview-task-3-start={preview?.proposedPlan.tasks.find((task) => task.public_id === 'TASK-003')?.start_date}
       data-testid="gantt-chart"
@@ -28,6 +44,33 @@ vi.mock('./components/GanttChart', () => ({
           {task.public_id} {task.name}
         </button>
       ))}
+      <button
+        aria-label="Имитировать прямой перенос первой задачи"
+        disabled={interactionDisabled || interactionBusy}
+        onClick={() => onDirectEdit({
+          type: 'move',
+          task: plan.tasks[0],
+          intendedDate: '2026-02-03',
+        })}
+      >Перенос первой задачи</button>
+      <button
+        aria-label="Имитировать прямой перенос последней задачи"
+        disabled={interactionDisabled || interactionBusy}
+        onClick={() => onDirectEdit({
+          type: 'move',
+          task: plan.tasks[plan.tasks.length - 1],
+          intendedDate: '2026-02-06',
+        })}
+      >Перенос последней задачи</button>
+      <button
+        aria-label="Имитировать resize последней задачи"
+        disabled={interactionDisabled || interactionBusy}
+        onClick={() => onDirectEdit({
+          type: 'resize',
+          task: plan.tasks[plan.tasks.length - 1],
+          intendedDate: '2026-02-12',
+        })}
+      >Resize последней задачи</button>
     </div>
   ),
 }))
@@ -586,5 +629,168 @@ describe('Iteration 04 integration state', () => {
       '2026-02-12',
     )
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('prepares one direct move request and adopts an auto-applied backend plan', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    const applied = structuredClone(source)
+    applied.tasks[1] = {
+      ...applied.tasks[1],
+      start_date: '2026-02-06',
+      end_date: '2026-02-11',
+    }
+    stored(source)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'APPLIED',
+        plan: applied,
+        changeset: null,
+        message: 'Изменение применено к плану.',
+      }),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', {
+      name: 'Имитировать прямой перенос последней задачи',
+    }))
+
+    await waitFor(() => expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-active-task-2-start',
+      '2026-02-06',
+    ))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/direct-edits/prepare')
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      current_plan: source,
+      edit: {
+        type: 'move',
+        task_id: source.tasks[1].internal_id,
+        intended_start_date: '2026-02-06',
+      },
+    })
+  })
+
+  it('keeps active dates and reuses pending preview for an impacted drag', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    const proposed = structuredClone(source)
+    proposed.tasks[0] = {
+      ...proposed.tasks[0],
+      start_date: '2026-02-03',
+      end_date: '2026-02-05',
+    }
+    proposed.tasks[1] = {
+      ...proposed.tasks[1],
+      start_date: '2026-02-06',
+      end_date: '2026-02-11',
+    }
+    const changeset = makeChangeSet(proposed)
+    changeset.requested_changes = [{
+      type: 'move_task',
+      task_id: source.tasks[0].internal_id,
+      start_date: '2026-02-03',
+    }]
+    changeset.affected_tasks = source.tasks.map((task) => ({
+      internal_id: task.internal_id,
+      public_id: task.public_id,
+      name: task.name,
+    }))
+    changeset.proposed_impacts = [{
+      internal_id: source.tasks[1].internal_id,
+      public_id: source.tasks[1].public_id,
+      task_name: source.tasks[1].name,
+      current_start_date: source.tasks[1].start_date,
+      current_end_date: source.tasks[1].end_date,
+      proposed_start_date: proposed.tasks[1].start_date,
+      proposed_end_date: proposed.tasks[1].end_date,
+      reason: 'TASK-002 must start after TASK-001 finishes',
+      dependency_internal_id: source.tasks[0].internal_id,
+      dependency_public_id: source.tasks[0].public_id,
+      dependency_name: source.tasks[0].name,
+    }]
+    stored(source)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'CONFIRMATION_REQUIRED',
+        plan: source,
+        changeset,
+        message: 'Проверьте последствия изменения перед применением.',
+      }),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', {
+      name: 'Имитировать прямой перенос первой задачи',
+    }))
+
+    expect(await screen.findByText('Изменения ещё не применены')).toBeInTheDocument()
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-active-task-1-start',
+      '2026-02-02',
+    )
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-interaction-disabled',
+      'true',
+    )
+    expect(screen.getByRole('button', {
+      name: 'Имитировать прямой перенос первой задачи',
+    })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Отменить' }))
+
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-active-task-1-start',
+      '2026-02-02',
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('prepares right-edge resize and blocks other mutations while waiting', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    const applied = structuredClone(source)
+    applied.tasks[1] = {
+      ...applied.tasks[1],
+      duration_workdays: 6,
+      end_date: '2026-02-12',
+    }
+    stored(source)
+    let resolveRequest: (response: Response) => void = () => undefined
+    const responsePromise = new Promise<Response>((resolve) => {
+      resolveRequest = resolve
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockReturnValue(responsePromise)
+    render(<App />)
+
+    await user.click(screen.getByRole('button', {
+      name: 'Имитировать resize последней задачи',
+    }))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Проверяем изменение')
+    expect(screen.getByRole('button', { name: 'Excel' })).toBeDisabled()
+    expect(screen.getByRole('button', {
+      name: 'Имитировать прямой перенос первой задачи',
+    })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    expect(screen.getByLabelText('Сообщение AI-помощнику')).toBeDisabled()
+
+    await act(async () => resolveRequest(jsonResponse({
+      status: 'APPLIED',
+      plan: applied,
+      changeset: null,
+      message: 'Изменение применено к плану.',
+    })))
+
+    await waitFor(() => expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-active-task-2-duration',
+      '6',
+    ))
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).edit).toEqual({
+      type: 'resize',
+      task_id: source.tasks[1].internal_id,
+      intended_end_date: '2026-02-12',
+    })
   })
 })

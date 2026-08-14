@@ -128,7 +128,26 @@ export type PendingChange = {
   changeset: ChangeSet
   message: string
   availableOptions: string[]
-  source: 'chat' | 'import'
+  source: 'chat' | 'import' | 'direct'
+}
+
+export type DirectEditIntent =
+  | {
+      type: 'move'
+      task: Task
+      intendedDate: string
+    }
+  | {
+      type: 'resize'
+      task: Task
+      intendedDate: string
+    }
+
+export type DirectEditResponse = {
+  status: 'APPLIED' | 'CONFIRMATION_REQUIRED' | 'INVALID'
+  plan: PlanState
+  changeset: ChangeSet | null
+  message: string
 }
 
 export type PlannerState = {

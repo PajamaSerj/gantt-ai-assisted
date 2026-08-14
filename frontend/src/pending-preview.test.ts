@@ -5,7 +5,11 @@ import {
   formatPreviewDateRange,
   pendingPreviewSummary,
 } from './pending-preview'
-import { makeSergeyPendingScenario } from './test/fixtures'
+import {
+  makeChangeSet,
+  makePlan,
+  makeSergeyPendingScenario,
+} from './test/fixtures'
 
 describe('pending ChangeSet preview', () => {
   it('derives all direct and dependency-driven changes without mutating current plan', () => {
@@ -44,6 +48,28 @@ describe('pending ChangeSet preview', () => {
     )
     expect(formatPreviewDateRange('2026-02-27', '2026-03-02')).toBe(
       '27 февр. – 2 марта',
+    )
+  })
+
+  it('describes a direct duration resize without treating it as a move', () => {
+    const current = makePlan()
+    const proposed = structuredClone(current)
+    proposed.tasks[1] = {
+      ...proposed.tasks[1],
+      duration_workdays: 6,
+      end_date: '2026-02-12',
+    }
+    const changeset = makeChangeSet(proposed)
+    changeset.requested_changes = [{
+      type: 'set_duration',
+      task_id: current.tasks[1].internal_id,
+      duration_workdays: 6,
+    }]
+
+    const preview = buildPendingPlanPreview(current, changeset)
+
+    expect(preview && pendingPreviewSummary(preview)).toBe(
+      'Вы изменяете длительность 1 задачи.',
     )
   })
 })

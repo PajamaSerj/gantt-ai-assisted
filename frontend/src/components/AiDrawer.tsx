@@ -13,6 +13,7 @@ import { AssistantMessage } from './AssistantMessage'
 type AiDrawerProps = {
   open: boolean
   busy: boolean
+  mutationLocked: boolean
   pending: PendingChange | null
   messages: ConversationMessage[]
   message: string
@@ -25,6 +26,7 @@ type AiDrawerProps = {
 export function AiDrawer({
   open,
   busy,
+  mutationLocked,
   pending,
   messages,
   message,
@@ -78,7 +80,7 @@ export function AiDrawer({
       )
       return
     }
-    if (busy || pending || !message.trim()) return
+    if (busy || mutationLocked || pending || !message.trim()) return
     void onSubmit()
   }
 
@@ -152,7 +154,7 @@ export function AiDrawer({
             composingRef.current = false
           }}
           onKeyDown={handleComposerKeyDown}
-          disabled={busy || Boolean(pending)}
+          disabled={busy || mutationLocked || Boolean(pending)}
           rows={3}
         />
         <div className="composer-actions">
@@ -166,7 +168,7 @@ export function AiDrawer({
               if (file) onAttach(file)
               event.target.value = ''
             }}
-            disabled={busy || Boolean(pending)}
+            disabled={busy || mutationLocked || Boolean(pending)}
             aria-label="Прикрепить Excel"
           />
           <button
@@ -174,14 +176,16 @@ export function AiDrawer({
             type="button"
             title="Импортировать Excel"
             onClick={() => attachmentRef.current?.click()}
-            disabled={busy || Boolean(pending)}
+            disabled={busy || mutationLocked || Boolean(pending)}
           >
             📎 <span>Excel</span>
           </button>
           <button
             className="send-button"
             type="submit"
-            disabled={busy || Boolean(pending) || !message.trim()}
+            disabled={
+              busy || mutationLocked || Boolean(pending) || !message.trim()
+            }
           >
             Отправить <span>↑</span>
           </button>

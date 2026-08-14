@@ -24,6 +24,24 @@ declare module 'frappe-gantt' {
     container_height?: number | 'auto'
     bar_height?: number
     padding?: number
+    fixed_duration?: boolean
+    holidays?: Record<string, 'weekend' | ((date: Date) => boolean)>
+    is_weekend?: (date: Date) => boolean
+    view_modes?: GanttViewMode[]
+    on_date_change?: (task: GanttTask, start: Date, end: Date) => void
+  }
+
+  export type GanttViewMode = {
+    name: 'Day' | 'Week' | 'Month'
+    padding: string | [string, string]
+    step: string
+    date_format: string
+    column_width?: number
+    lower_text?: string | ((date: Date, previous: Date | null, language: string) => string)
+    upper_text?: string | ((date: Date, previous: Date | null, language: string) => string)
+    upper_text_frequency?: number
+    thick_line?: (date: Date) => boolean
+    snap_at?: string
   }
 
   export default class Gantt {

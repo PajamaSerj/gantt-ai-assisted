@@ -195,6 +195,10 @@ function taskNominative(count: number): string {
   return taskNoun(count, 'задача')
 }
 
+function taskGenitive(count: number): string {
+  return taskNoun(count, 'задачи')
+}
+
 function workingDays(count: number): string {
   const absolute = Math.abs(count)
   const modulo100 = absolute % 100
@@ -207,6 +211,12 @@ function workingDays(count: number): string {
 }
 
 export function pendingPreviewSummary(preview: PendingPlanPreview): string {
+  const directDurationChanges = preview.changes.filter(
+    (change) => change.source === 'direct' && change.currentTask &&
+      change.proposedTask &&
+      change.currentTask.duration_workdays !==
+        change.proposedTask.duration_workdays,
+  )
   const directDateChanges = preview.changes.filter(
     (change) => change.source === 'direct' && change.kind === 'dates' &&
       change.currentTask && change.proposedTask,
@@ -219,7 +229,16 @@ export function pendingPreviewSummary(preview: PendingPlanPreview): string {
   )
 
   let directSummary: string
-  if (directDateChanges.length === preview.directCount && deltas.size === 1) {
+  if (
+    directDurationChanges.length > 0 &&
+    directDurationChanges.length === preview.directCount
+  ) {
+    directSummary = (
+      `Вы изменяете длительность ${taskGenitive(preview.directCount)}.`
+    )
+  } else if (
+    directDateChanges.length === preview.directCount && deltas.size === 1
+  ) {
     const delta = [...deltas][0]
     if (delta !== 0) {
       directSummary = (

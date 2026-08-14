@@ -51,3 +51,16 @@ def end_date_for_duration(start_date: date, duration_workdays: int) -> date:
         raise ValueError("duration_workdays must be positive")
     normalized_start = normalize_to_working_day(start_date)
     return add_working_days(normalized_start, duration_workdays - 1)
+
+
+def working_days_inclusive(start_date: date, end_date: date) -> int:
+    """Count Monday-Friday dates in an inclusive visual date range."""
+    if end_date < start_date:
+        raise ValueError("end_date must not be before start_date")
+    cursor = start_date
+    count = 0
+    while cursor <= end_date:
+        if is_working_day(cursor):
+            count += 1
+        cursor += ONE_DAY
+    return count

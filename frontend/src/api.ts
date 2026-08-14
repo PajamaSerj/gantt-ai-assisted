@@ -2,6 +2,8 @@ import type {
   ChangeSet,
   ChatResponse,
   ConversationMessage,
+  DirectEditIntent,
+  DirectEditResponse,
   ImportResponse,
   PlanState,
 } from './types'
@@ -79,6 +81,29 @@ export async function applyChangeSet(
     }),
   })
   return expectJson(response)
+}
+
+export async function prepareDirectEdit(
+  currentPlan: PlanState,
+  intent: DirectEditIntent,
+): Promise<DirectEditResponse> {
+  const edit = intent.type === 'move'
+    ? {
+        type: 'move',
+        task_id: intent.task.internal_id,
+        intended_start_date: intent.intendedDate,
+      }
+    : {
+        type: 'resize',
+        task_id: intent.task.internal_id,
+        intended_end_date: intent.intendedDate,
+      }
+  const response = await fetch('/api/direct-edits/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify({ current_plan: currentPlan, edit }),
+  })
+  return expectJson<DirectEditResponse>(response)
 }
 
 export async function importWorkbook(

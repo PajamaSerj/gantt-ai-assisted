@@ -9,6 +9,7 @@ from app.domain.calendar import (
     next_working_day,
     normalize_to_working_day,
     shift_working_days,
+    working_days_inclusive,
 )
 
 
@@ -60,6 +61,18 @@ def test_duration_crosses_weekend() -> None:
 
 def test_weekend_start_is_normalized_before_duration_calculation() -> None:
     assert end_date_for_duration(date(2026, 8, 22), 2) == date(2026, 8, 25)
+
+
+def test_working_days_inclusive_counts_weekdays_across_weekend() -> None:
+    assert working_days_inclusive(
+        date(2026, 2, 27),
+        date(2026, 3, 4),
+    ) == 4
+
+
+def test_working_days_inclusive_rejects_reversed_range() -> None:
+    with pytest.raises(ValueError, match="end_date must not be before"):
+        working_days_inclusive(date(2026, 3, 2), date(2026, 2, 27))
 
 
 @pytest.mark.parametrize(
