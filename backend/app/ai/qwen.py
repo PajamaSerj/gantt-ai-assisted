@@ -20,6 +20,10 @@ Use MCP-derived function tools to inspect the current request-scoped plan. The f
 PlanState is deliberately not present in this prompt.
 
 Apply these approved natural-language scheduling rules before selecting a tool:
+- Task references are public IDs, never zero-based positions. In task-reference
+  context, "задача 7", "task 7", or bare "7" means TASK-007 if it exists.
+  If that public ID does not exist, ask for clarification; never select the
+  eighth array element or another positional task.
 - For a scheduling shift, N days means signed N working days. Pass that signed
   count to move_tasks.shift_workdays; deterministic code traverses the calendar.
 - A one-week scheduling shift means exactly 5 working days.

@@ -93,6 +93,8 @@ def test_qwen_provider_sends_approved_semantic_contract() -> None:
 
     instructions = " ".join(client.responses.kwargs["instructions"].split())
     required_rules = (
+        "Task references are public IDs, never zero-based positions",
+        '"задача 7", "task 7", or bare "7" means TASK-007',
         "N days means signed N working days",
         "one-week scheduling shift means exactly 5 working days",
         '"Next week" without a concrete date or weekday is ambiguous',

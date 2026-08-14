@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import App from './App'
@@ -77,7 +77,7 @@ describe('Iteration 04 integration state', () => {
     )
   })
 
-  it('keeps the plan on clarification and persists conversation context', async () => {
+  it('keeps the current plan when clarification carries a stale response plan', async () => {
     const user = userEvent.setup()
     const plan = makePlan()
     stored(plan)
@@ -85,7 +85,7 @@ describe('Iteration 04 integration state', () => {
       jsonResponse({
         status: 'clarification_required',
         message: 'Уточните конкретный день недели.',
-        plan,
+        plan: makePlan('Устаревший план'),
         conversation_context: [
           { role: 'user', content: 'Перенеси на следующую неделю' },
           { role: 'assistant', content: 'Уточните конкретный день недели.' },
@@ -105,6 +105,7 @@ describe('Iteration 04 integration state', () => {
 
     expect(await screen.findByText('Уточните конкретный день недели.')).toBeInTheDocument()
     expect(screen.getByText(/TASK-001 Исследование продукта/)).toBeInTheDocument()
+    expect(screen.queryByText(/Устаревший план/)).not.toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}').state.conversationContext).toHaveLength(2)
   })
 
@@ -117,7 +118,7 @@ describe('Iteration 04 integration state', () => {
       jsonResponse({
         status: 'confirmation_required',
         message: 'Перенос затронет связанные задачи.',
-        plan,
+        plan: makePlan('Устаревший план'),
         conversation_context: [],
         pending_changeset: changeset,
         available_options: ['apply_all', 'cancel'],
@@ -131,8 +132,9 @@ describe('Iteration 04 integration state', () => {
 
     expect(await screen.findByText('Изменения ещё не применены')).toBeInTheDocument()
     expect(screen.getByLabelText('Сообщение AI-помощнику')).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: 'Excel' }))
-    expect(screen.getByRole('button', { name: /Импортировать/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Excel' })).toBeDisabled()
+    expect(screen.getByText(/TASK-001 Исследование продукта/)).toBeInTheDocument()
+    expect(screen.queryByText(/Устаревший план/)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Отменить' }))
 
     expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
@@ -185,7 +187,7 @@ describe('Iteration 04 integration state', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(seed))
     render(<App />)
 
-    await user.click(screen.getByRole('button', { name: /Восстановить демо/ }))
+    await user.click(screen.getByRole('button', { name: /Восстановить пример/ }))
 
     expect(await screen.findByText(/TASK-001 Исследование продукта/)).toBeInTheDocument()
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}').state
@@ -232,5 +234,158 @@ describe('Iteration 04 integration state', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/api/import', '/api/import'])
+  })
+
+  it('keeps the current plan when provider error carries a stale plan', async () => {
+    const user = userEvent.setup()
+    stored()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse(
+        {
+          status: 'provider_error',
+          message: 'AI временно недоступен.',
+          plan: makePlan('Устаревший план'),
+          conversation_context: [
+            { role: 'user', content: 'Измени задачу' },
+            { role: 'assistant', content: 'AI временно недоступен.' },
+          ],
+          pending_changeset: null,
+          available_options: [],
+        },
+        502,
+      ),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    await user.type(screen.getByLabelText('Сообщение AI-помощнику'), 'Измени задачу')
+    await user.click(screen.getByRole('button', { name: /Отправить/ }))
+
+    expect(await screen.findByText('AI временно недоступен.')).toBeInTheDocument()
+    expect(screen.getByText(/TASK-001 Исследование продукта/)).toBeInTheDocument()
+    expect(screen.queryByText(/Устаревший план/)).not.toBeInTheDocument()
+  })
+
+  it('shows the optimistic user turn, clears composer, and keeps the plan responsive', async () => {
+    const user = userEvent.setup()
+    stored()
+    let resolveRequest: (response: Response) => void = () => undefined
+    const pendingRequest = new Promise<Response>((resolve) => {
+      resolveRequest = resolve
+    })
+    vi.spyOn(globalThis, 'fetch').mockReturnValue(pendingRequest)
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    const composer = screen.getByLabelText('Сообщение AI-помощнику')
+    await user.type(composer, 'Покажи быстрый отклик')
+    await user.click(screen.getByRole('button', { name: /Отправить/ }))
+
+    expect(screen.getByText('Покажи быстрый отклик')).toBeInTheDocument()
+    expect(composer).toHaveValue('')
+    expect(screen.getByRole('status')).toHaveTextContent('Анализирую план')
+    await user.click(screen.getByRole('button', { name: /TASK-001/ }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Исследование продукта')
+
+    await act(async () => {
+      resolveRequest(
+        jsonResponse({
+          status: 'clarification_required',
+          message: 'Уточните действие.',
+          plan: makePlan(),
+          conversation_context: [
+            { role: 'user', content: 'Покажи быстрый отклик' },
+            { role: 'assistant', content: 'Уточните действие.' },
+          ],
+          pending_changeset: null,
+          available_options: [],
+        }),
+      )
+    })
+    expect(await screen.findByText('Уточните действие.')).toBeInTheDocument()
+  })
+
+  it('ignores a late applied response after the local plan was restored', async () => {
+    const user = userEvent.setup()
+    stored(makePlan('Текущий изменённый план'))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let resolveChat: (response: Response) => void = () => undefined
+    const chatRequest = new Promise<Response>((resolve) => {
+      resolveChat = resolve
+    })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockReturnValueOnce(chatRequest)
+      .mockResolvedValueOnce(jsonResponse(makePlan('Восстановленный пример')))
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    await user.type(screen.getByLabelText('Сообщение AI-помощнику'), 'Измени план')
+    await user.click(screen.getByRole('button', { name: /Отправить/ }))
+    await user.click(screen.getByRole('button', { name: /Восстановить пример/ }))
+    expect(await screen.findByText(/TASK-001 Восстановленный пример/)).toBeInTheDocument()
+
+    await act(async () => {
+      resolveChat(
+        jsonResponse({
+          status: 'applied',
+          message: 'Изменения применены.',
+          plan: makePlan('Поздний ответ'),
+          conversation_context: [],
+          pending_changeset: null,
+          available_options: [],
+        }),
+      )
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(/TASK-001 Восстановленный пример/)).toBeInTheDocument()
+    expect(screen.queryByText(/Поздний ответ/)).not.toBeInTheDocument()
+  })
+
+  it('renders supported assistant Markdown without literal markers', async () => {
+    const user = userEvent.setup()
+    stored()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'clarification_required',
+        message: '**Возможности**\n* Перенос задач\n* Изменение зависимостей',
+        plan: makePlan(),
+        conversation_context: [
+          { role: 'user', content: 'Помощь' },
+          {
+            role: 'assistant',
+            content: '**Возможности**\n* Перенос задач\n* Изменение зависимостей',
+          },
+        ],
+        pending_changeset: null,
+        available_options: [],
+      }),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    await user.type(screen.getByLabelText('Сообщение AI-помощнику'), 'Помощь')
+    await user.click(screen.getByRole('button', { name: /Отправить/ }))
+
+    const drawer = screen.getByRole('complementary', { name: 'AI-помощник' })
+    expect(await screen.findByText('Возможности')).toHaveProperty('tagName', 'STRONG')
+    expect(drawer).toHaveTextContent('Перенос задач')
+    expect(drawer).not.toHaveTextContent('**Возможности**')
+    expect(drawer).not.toHaveTextContent('* Перенос задач')
+  })
+
+  it('opens one desktop AI workspace panel beside the planner without a scrim', async () => {
+    const user = userEvent.setup()
+    stored()
+    const { container } = render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+
+    expect(container.querySelector('.workspace-layout.with-ai')).not.toBeNull()
+    expect(screen.getByRole('main')).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'AI-помощник' })).toBeInTheDocument()
+    expect(container.querySelector('.drawer-scrim')).toBeNull()
+    expect(screen.queryByLabelText('Открыть AI-помощника')).not.toBeInTheDocument()
   })
 })

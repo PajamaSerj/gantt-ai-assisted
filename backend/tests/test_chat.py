@@ -8,7 +8,7 @@ from app.ai.models import ChatRequest
 from app.ai.provider import AIProviderError, ProviderToolCall, ProviderTurn
 from app.main import app
 from app.seed.data import get_seed_plan
-from app.services.chat import orchestrate_chat
+from app.services.chat import CAPABILITY_MESSAGE, orchestrate_chat
 
 
 class ScriptedProvider:
@@ -83,6 +83,42 @@ def test_safe_edit_reads_through_mcp_and_applies() -> None:
         tool["name"] != "apply_changes"
         for tool in provider.requests[0]["tools"]
     )
+
+
+def test_equivalent_help_queries_are_canonical_and_skip_provider() -> None:
+    source = get_seed_plan()
+
+    first = run_chat(ScriptedProvider(), "Что ты умеешь?", plan=source)
+    second = run_chat(ScriptedProvider(), "  помощь!!! ", plan=source)
+
+    assert first.status == second.status == "clarification_required"
+    assert first.message == second.message == CAPABILITY_MESSAGE
+    assert first.plan == second.plan == source
+
+
+def test_routine_success_message_comes_from_deterministic_result() -> None:
+    source = get_seed_plan()
+
+    def response(provider_message: str):
+        return run_chat(
+            ScriptedProvider(
+                tool_turn(
+                    "update",
+                    "update_task",
+                    {"identifier": "TASK-001", "description": "Updated"},
+                ),
+                final_turn(provider_message),
+            ),
+            "Обнови описание TASK-001",
+            plan=source,
+        )
+
+    first = response("Готово, вот очень длинное объяснение от модели.")
+    second = response("Совсем другая формулировка.")
+
+    assert first.status == second.status == "applied"
+    assert first.message == second.message
+    assert first.message.startswith("Изменения применены:")
 
 
 def test_mass_move_is_one_auto_applicable_batch() -> None:

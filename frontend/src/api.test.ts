@@ -37,6 +37,28 @@ describe('frontend API contract', () => {
     })
   })
 
+  it('returns a structured provider error so the UI can preserve PlanState', async () => {
+    const plan = makePlan()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse(
+        {
+          status: 'provider_error',
+          message: 'Провайдер временно недоступен.',
+          plan,
+          conversation_context: [],
+          pending_changeset: null,
+          available_options: [],
+        },
+        502,
+      ),
+    )
+
+    const response = await sendChat('Проверь план', plan, [])
+
+    expect(response.status).toBe('provider_error')
+    expect(response.plan).toEqual(plan)
+  })
+
   it('routes apply, import, and export through their backend endpoints', async () => {
     const plan = makePlan()
     const changeset = makeChangeSet(plan)

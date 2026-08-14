@@ -59,6 +59,27 @@ def test_read_tools_resolve_public_id_and_unique_name() -> None:
     ]
 
 
+def test_numeric_task_reference_uses_public_id_not_zero_based_position() -> None:
+    context = PlanningRequestContext(get_seed_plan())
+
+    by_number = asyncio.run(
+        call_in_context(context, "get_task", {"identifier": "задача 7"})
+    )
+    by_bare_number = asyncio.run(
+        call_in_context(context, "get_task", {"identifier": "7"})
+    )
+
+    assert by_number == by_bare_number
+    assert by_number["task"]["public_id"] == "TASK-007"
+    assert by_number["task"]["name"] == "Demo readiness"
+
+    missing = asyncio.run(
+        call_in_context(context, "get_task", {"identifier": "task 8"})
+    )
+    assert missing["status"] == "error"
+    assert "TASK-008" in missing["message"] or "task 8" in missing["message"]
+
+
 def test_request_scoped_plan_context_is_isolated() -> None:
     first = get_seed_plan()
     second = PlanState(

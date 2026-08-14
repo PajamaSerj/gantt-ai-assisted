@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from app.ai.models import (
@@ -16,6 +17,25 @@ from app.mcp.context import (
 )
 
 MAX_PROVIDER_ROUNDS = 12
+
+CAPABILITY_MESSAGE = (
+    "Могу переносить задачи и группы задач, менять исполнителей и зависимости, "
+    "добавлять новые задачи и помогать перестраивать план. Если данных не хватает "
+    "или изменение затронет другие задачи — сначала уточню или попрошу подтверждение."
+)
+
+_HELP_QUERIES = {
+    "что ты умеешь",
+    "что можешь",
+    "помощь",
+    "help",
+}
+
+
+def _is_help_query(message: str) -> bool:
+    normalized = re.sub(r"[^\w\s]", "", message.casefold())
+    normalized = " ".join(normalized.split())
+    return normalized in _HELP_QUERIES
 
 
 def _conversation_with_reply(
@@ -41,10 +61,10 @@ def _initial_input(request: ChatRequest) -> list[dict[str, Any]]:
 def _conflict_message(changeset: ChangeSet) -> str:
     if changeset.conflicts:
         return " ".join(conflict.message for conflict in changeset.conflicts)
-    return "Предложенные изменения не прошли deterministic validation."
+    return "Предложенные изменения нельзя применить к текущему плану."
 
 
-def _confirmation_message(changeset: ChangeSet, provider_message: str) -> str:
+def _confirmation_message(changeset: ChangeSet) -> str:
     details = [reason.message for reason in changeset.confirmation_reasons]
     details.extend(
         f"{impact.public_id} будет перенесена с "
@@ -57,10 +77,20 @@ def _confirmation_message(changeset: ChangeSet, provider_message: str) -> str:
         f"{normalization.normalized_date.isoformat()}."
         for normalization in changeset.date_normalizations
     )
-    prefix = provider_message.strip() or "Изменения подготовлены."
+    prefix = "Изменения подготовлены."
     if not details:
         return prefix
     return f"{prefix} Требуется подтверждение: {' '.join(details)}"
+
+
+def _applied_message(changeset: ChangeSet) -> str:
+    affected = changeset.affected_tasks
+    if len(affected) == 1:
+        task = affected[0]
+        return f"Изменения применены: {task.public_id} · {task.name}."
+    if affected:
+        return f"Изменения применены: {len(affected)} задач."
+    return "Изменения применены."
 
 
 def provider_error_response(
@@ -79,6 +109,16 @@ async def orchestrate_chat(
     provider: AIProvider,
 ) -> ChatResponse:
     validate_plan_schedule(request.plan)
+    if _is_help_query(request.message):
+        return ChatResponse(
+            status=ChatStatus.CLARIFICATION_REQUIRED,
+            message=CAPABILITY_MESSAGE,
+            plan=request.plan,
+            conversation_context=_conversation_with_reply(
+                request, CAPABILITY_MESSAGE
+            ),
+        )
+
     planning_context = PlanningRequestContext(plan=request.plan)
     input_items = _initial_input(request)
     provider_message = ""
@@ -134,7 +174,7 @@ async def orchestrate_chat(
                 )
 
             if changeset.status is ChangeSetStatus.CONFIRMATION_REQUIRED:
-                message = _confirmation_message(changeset, provider_message)
+                message = _confirmation_message(changeset)
                 return ChatResponse(
                     status=ChatStatus.CONFIRMATION_REQUIRED,
                     message=message,
@@ -150,7 +190,7 @@ async def orchestrate_chat(
                 raise AIProviderError("Authorized ChangeSet application failed")
             if planning_context.applied_plan is None:
                 raise AIProviderError("Authorized ChangeSet returned no PlanState")
-            message = provider_message.strip() or "Изменения применены."
+            message = _applied_message(changeset)
             return ChatResponse(
                 status=ChatStatus.APPLIED,
                 message=message,

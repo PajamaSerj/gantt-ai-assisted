@@ -17,8 +17,8 @@ export class ApiError extends Error {
 
 async function errorMessage(response: Response): Promise<string> {
   try {
-    const body = (await response.json()) as { detail?: string }
-    return body.detail || `Запрос завершился с ошибкой (${response.status})`
+    const body = (await response.json()) as { detail?: string; message?: string }
+    return body.detail || body.message || `Запрос завершился с ошибкой (${response.status})`
   } catch {
     return `Запрос завершился с ошибкой (${response.status})`
   }
@@ -49,6 +49,18 @@ export async function sendChat(
       conversation_context: conversationContext,
     }),
   })
+  if (!response.ok) {
+    const body = (await response.json()) as Partial<ChatResponse> & {
+      detail?: string
+    }
+    if (body.status === 'provider_error' && body.plan && body.message) {
+      return body as ChatResponse
+    }
+    throw new ApiError(
+      body.detail || body.message || `Запрос завершился с ошибкой (${response.status})`,
+      response.status,
+    )
+  }
   return expectJson<ChatResponse>(response)
 }
 

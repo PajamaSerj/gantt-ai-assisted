@@ -1,20 +1,23 @@
 :root {
   font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  color: #15241d;
-  background: #eef2ed;
+  color: #344054;
+  background: #f3f5f8;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --ink: #15241d;
-  --muted: #68746e;
-  --line: #dfe6e1;
-  --surface: #ffffff;
-  --surface-soft: #f7f9f7;
-  --forest: #183f31;
-  --forest-deep: #102c23;
-  --mint: #c8f36d;
-  --mint-soft: #ecfacd;
-  --coral: #f48a69;
+  --ink: #344054;
+  --ink-strong: #172033;
+  --muted: #667085;
+  --line: #dfe4ec;
+  --line-soft: #edf0f4;
+  --app-background: #f3f5f8;
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --accent-soft: #f0f0ff;
+  --danger: #d96552;
+  --warning: #d69a34;
+  --success: #2d8a67;
+  --shadow-small: 0 4px 16px rgba(15, 23, 42, 0.05);
 }
 
 * {
@@ -30,9 +33,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(200, 243, 109, 0.17), transparent 28rem),
-    #eef2ed;
+  background: var(--app-background);
 }
 
 button,
@@ -52,14 +53,14 @@ input:disabled,
 select:disabled,
 textarea:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.52;
 }
 
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid rgba(71, 118, 88, 0.28);
+  outline: 3px solid rgba(79, 70, 229, 0.2);
   outline-offset: 2px;
 }
 

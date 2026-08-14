@@ -44,7 +44,7 @@ export function ImportDialog({ file, busy, onClose, onSubmit }: ImportDialogProp
       >
         <div className="modal-header">
           <div>
-            <p className="eyebrow">Детерминированный импорт</p>
+            <p className="eyebrow">Импорт Excel</p>
             <h2 id="import-dialog-title">Импортировать Excel</h2>
           </div>
           <button

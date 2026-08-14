@@ -1,6 +1,7 @@
-import { useRef, type FormEvent } from 'react'
+import { useEffect, useRef, type FormEvent, type UIEvent } from 'react'
 
 import type { ConversationMessage, PendingChange } from '../types'
+import { AssistantMessage } from './AssistantMessage'
 
 type AiDrawerProps = {
   open: boolean
@@ -26,6 +27,20 @@ export function AiDrawer({
   onAttach,
 }: AiDrawerProps) {
   const attachmentRef = useRef<HTMLInputElement>(null)
+  const conversationRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
+
+  useEffect(() => {
+    if (!open || !stickToBottomRef.current) return
+    const conversation = conversationRef.current
+    if (conversation) conversation.scrollTop = conversation.scrollHeight
+  }, [busy, messages, open])
+
+  function trackConversationScroll(event: UIEvent<HTMLDivElement>) {
+    const element = event.currentTarget
+    stickToBottomRef.current =
+      element.scrollHeight - element.scrollTop - element.clientHeight < 48
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -33,19 +48,24 @@ export function AiDrawer({
   }
 
   return (
-    <aside className={`ai-drawer ${open ? 'open' : ''}`} aria-hidden={!open}>
+    <aside className={`ai-drawer ${open ? 'open' : ''}`} aria-label="AI-помощник">
       <div className="drawer-header">
         <div className="ai-mark">✦</div>
         <div>
           <p className="eyebrow">AI-помощник</p>
-          <h2>Планируйте словами</h2>
+          <h2>Работа с планом</h2>
         </div>
         <button className="icon-button" onClick={onClose} aria-label="Закрыть AI-помощника">
           ×
         </button>
       </div>
 
-      <div className="conversation" aria-live="polite">
+      <div
+        className="conversation"
+        aria-live="polite"
+        onScroll={trackConversationScroll}
+        ref={conversationRef}
+      >
         {messages.length === 0 ? (
           <div className="assistant-intro">
             <span>✦</span>
@@ -55,11 +75,22 @@ export function AiDrawer({
         ) : (
           messages.map((item, index) => (
             <div className={`message ${item.role}`} key={`${item.role}-${index}`}>
-              {item.content}
+              {item.role === 'assistant' ? (
+                <AssistantMessage message={item.content} />
+              ) : (
+                item.content
+              )}
             </div>
           ))
         )}
-        {busy && <div className="message assistant typing">Анализирую план…</div>}
+        {busy && (
+          <div className="message assistant typing" role="status">
+            <span>Анализирую план</span>
+            <i aria-hidden="true" />
+            <i aria-hidden="true" />
+            <i aria-hidden="true" />
+          </div>
+        )}
       </div>
 
       {pending && (

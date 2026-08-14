@@ -1,3 +1,4 @@
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -20,6 +21,22 @@ class PlanningContextError(ValueError):
 
 class TaskResolutionError(ValueError):
     """Raised when a public TASK-ID or name cannot resolve uniquely."""
+
+
+_NUMERIC_TASK_REFERENCE = re.compile(
+    r"^(?:(?:task|задача)\s*(?:[-#№:]\s*)?)?0*(\d+)$",
+    re.IGNORECASE,
+)
+
+
+def normalize_task_reference(identifier: str) -> str:
+    """Map human numeric references to public IDs, never list positions."""
+    stripped = identifier.strip()
+    numeric_match = _NUMERIC_TASK_REFERENCE.fullmatch(stripped)
+    if numeric_match is None:
+        return stripped.casefold()
+    task_number = int(numeric_match.group(1))
+    return f"TASK-{task_number:03d}".casefold()
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +80,7 @@ class PlanningRequestContext:
         )
 
     def resolve(self, identifier: str, *, include_pending: bool = True) -> ResolvedTask:
-        normalized = identifier.strip().casefold()
+        normalized = normalize_task_reference(identifier)
         matches: list[ResolvedTask] = []
         for task in self.projected_plan().tasks:
             if (

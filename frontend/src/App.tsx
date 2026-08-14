@@ -36,7 +36,7 @@ function initialState(): PlannerState {
   return loadPlannerState(window.localStorage) || EMPTY_STATE
 }
 
-function responseState(response: ChatResponse): PlannerState {
+function pendingFromResponse(response: ChatResponse): PendingChange | null {
   const pendingChange =
     response.status === 'confirmation_required' && response.pending_changeset
       ? {
@@ -46,16 +46,21 @@ function responseState(response: ChatResponse): PlannerState {
           source: 'chat' as const,
         }
       : null
-  return {
-    plan: response.plan,
-    conversationContext: response.conversation_context,
-    pendingChange,
-  }
+  return pendingChange
+}
+
+function planFingerprint(plan: PlannerState['plan']): string {
+  return JSON.stringify(plan)
 }
 
 function App() {
   const [planner, setPlanner] = useState<PlannerState>(initialState)
-  const [busy, setBusy] = useState(false)
+  const [seedLoading, setSeedLoading] = useState(false)
+  const [chatBusy, setChatBusy] = useState(false)
+  const [importBusy, setImportBusy] = useState(false)
+  const [applyBusy, setApplyBusy] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
+  const [restoreBusy, setRestoreBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [importIssues, setImportIssues] = useState<ImportIssue[]>([])
@@ -67,11 +72,12 @@ function App() {
   const [viewMode, setViewMode] = useState<'Day' | 'Week' | 'Month'>('Week')
   const [scrollToStartToken, setScrollToStartToken] = useState(1)
   const toolbarFileRef = useRef<HTMLInputElement>(null)
+  const chatRequestRef = useRef(0)
 
   useEffect(() => {
     if (planner.plan) return
     const controller = new AbortController()
-    setBusy(true)
+    setSeedLoading(true)
     void fetchSeed(controller.signal)
       .then((plan) => {
         setPlanner({ plan, conversationContext: [], pendingChange: null })
@@ -79,10 +85,10 @@ function App() {
       })
       .catch((requestError: unknown) => {
         if (requestError instanceof Error && requestError.name !== 'AbortError') {
-          setError(`Не удалось загрузить демо-план: ${requestError.message}`)
+          setError(`Не удалось загрузить пример плана: ${requestError.message}`)
         }
       })
-      .finally(() => setBusy(false))
+      .finally(() => setSeedLoading(false))
     return () => controller.abort()
   }, [planner.plan])
 
@@ -111,32 +117,75 @@ function App() {
   }
 
   async function submitChat() {
-    if (!planner.plan || planner.pendingChange || !message.trim() || busy) return
+    if (!planner.plan || planner.pendingChange || !message.trim() || chatBusy) return
     const outgoing = message.trim()
+    const requestedPlan = planner.plan
+    const requestedPlanFingerprint = planFingerprint(requestedPlan)
+    const requestContext = planner.conversationContext
+    const requestId = chatRequestRef.current + 1
+    chatRequestRef.current = requestId
     clearFeedback()
-    setBusy(true)
+    setMessage('')
+    setChatBusy(true)
+    setPlanner((current) => ({
+      ...current,
+      conversationContext: [
+        ...requestContext,
+        { role: 'user', content: outgoing },
+      ],
+    }))
     try {
       const response = await sendChat(
         outgoing,
-        planner.plan,
-        planner.conversationContext,
+        requestedPlan,
+        requestContext,
       )
-      setPlanner(responseState(response))
-      setMessage('')
-      if (response.status === 'provider_error') setError(response.message)
+      if (chatRequestRef.current !== requestId) return
+      setPlanner((current) => {
+        const requestIsCurrent =
+          planFingerprint(current.plan) === requestedPlanFingerprint
+        if (!requestIsCurrent) {
+          return {
+            ...current,
+            conversationContext: [
+              ...current.conversationContext,
+              {
+                role: 'assistant',
+                content:
+                  'План изменился, пока готовился ответ. Повторите запрос для актуального плана.',
+              },
+            ],
+          }
+        }
+        return {
+          plan: response.status === 'applied' ? response.plan : current.plan,
+          conversationContext: response.conversation_context,
+          pendingChange:
+            response.status === 'confirmation_required'
+              ? pendingFromResponse(response)
+              : current.pendingChange,
+        }
+      })
     } catch (requestError) {
-      setError(
+      if (chatRequestRef.current !== requestId) return
+      const errorMessage =
         requestError instanceof Error
           ? requestError.message
-          : 'AI-помощник временно недоступен',
-      )
+          : 'AI-помощник временно недоступен'
+      setPlanner((current) => ({
+        ...current,
+        conversationContext: [
+          ...current.conversationContext,
+          { role: 'assistant', content: `Не удалось обработать запрос. ${errorMessage}` },
+        ],
+      }))
     } finally {
-      setBusy(false)
+      if (chatRequestRef.current === requestId) setChatBusy(false)
     }
   }
 
   function beginImport(file: File) {
-    if (planner.pendingChange || busy) return
+    if (planner.pendingChange || chatBusy || importBusy || applyBusy || restoreBusy) return
     clearFeedback()
     setExcelMenuOpen(false)
     setImportFile(file)
@@ -147,9 +196,9 @@ function App() {
     mode: 'replace' | 'append',
     dateConstraint: string,
   ) {
-    if (!planner.plan || planner.pendingChange || busy) return
+    if (!planner.plan || planner.pendingChange || chatBusy || importBusy) return
     clearFeedback()
-    setBusy(true)
+    setImportBusy(true)
     try {
       const response = await importWorkbook(
         file,
@@ -163,7 +212,7 @@ function App() {
         return
       }
       if (!response.changeset) {
-        throw new Error('Backend не вернул подготовленный ChangeSet')
+        throw new Error('Не удалось подготовить изменения для импорта')
       }
       if (response.status === 'CONFIRMATION_REQUIRED') {
         const pending: PendingChange = {
@@ -197,15 +246,15 @@ function App() {
           : 'Не удалось импортировать Excel',
       )
     } finally {
-      setBusy(false)
+      setImportBusy(false)
     }
   }
 
   async function applyPending() {
-    if (!planner.plan || !planner.pendingChange || busy) return
+    if (!planner.plan || !planner.pendingChange || applyBusy) return
     if (!planner.pendingChange.availableOptions.includes('apply_all')) return
     clearFeedback()
-    setBusy(true)
+    setApplyBusy(true)
     try {
       const result = await applyChangeSet(
         planner.plan,
@@ -226,21 +275,21 @@ function App() {
           : 'Не удалось применить ChangeSet',
       )
     } finally {
-      setBusy(false)
+      setApplyBusy(false)
     }
   }
 
   function cancelPending() {
-    if (!planner.pendingChange || busy) return
+    if (!planner.pendingChange || applyBusy) return
     setPlanner((current) => ({ ...current, pendingChange: null }))
     setNotice('Подготовленные изменения отменены. План не изменён.')
     setError(null)
   }
 
   async function runExport() {
-    if (!planner.plan || busy) return
+    if (!planner.plan || exportBusy) return
     clearFeedback()
-    setBusy(true)
+    setExportBusy(true)
     setExcelMenuOpen(false)
     try {
       downloadWorkbook(await exportWorkbook(planner.plan))
@@ -252,18 +301,20 @@ function App() {
           : 'Не удалось экспортировать план',
       )
     } finally {
-      setBusy(false)
+      setExportBusy(false)
     }
   }
 
   async function restoreDemo() {
-    if (busy) return
+    if (restoreBusy) return
     const confirmed = window.confirm(
-      'Восстановить исходный демо-план? Текущие изменения и история AI будут удалены.',
+      'Восстановить исходный пример плана? Текущие изменения и история AI будут удалены.',
     )
     if (!confirmed) return
     clearFeedback()
-    setBusy(true)
+    chatRequestRef.current += 1
+    setChatBusy(false)
+    setRestoreBusy(true)
     try {
       const plan = await fetchSeed()
       setPlanner({ plan, conversationContext: [], pendingChange: null })
@@ -272,28 +323,31 @@ function App() {
       setImportFile(null)
       setDrawerOpen(false)
       setScrollToStartToken((value) => value + 1)
-      setNotice('Демо-план восстановлен.')
+      setNotice('Исходный пример плана восстановлен.')
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : 'Не удалось восстановить демо-план',
+          : 'Не удалось восстановить пример плана',
       )
     } finally {
-      setBusy(false)
+      setRestoreBusy(false)
     }
   }
 
   const plan = planner.plan
+  const planMutationBusy = importBusy || applyBusy || restoreBusy
+  const excelDisabled =
+    !plan || planMutationBusy || chatBusy || Boolean(planner.pendingChange)
 
   return (
     <div className="app-shell">
       <header className="toolbar">
         <div className="brand-lockup">
-          <div className="brand-mark">G</div>
+          <div className="brand-mark" aria-hidden="true">AG</div>
           <div>
-            <p className="eyebrow">PajamaTech planning</p>
             <h1>AI Gantt Planner</h1>
+            <p>Планирование проектов</p>
           </div>
         </div>
 
@@ -304,7 +358,7 @@ function App() {
               onClick={() => setExcelMenuOpen((open) => !open)}
               aria-label="Excel"
               aria-expanded={excelMenuOpen}
-              disabled={!plan || busy}
+              disabled={excelDisabled}
             >
               <span>▦</span> Excel <span className="chevron">⌄</span>
             </button>
@@ -312,14 +366,14 @@ function App() {
               <div className="excel-menu">
                 <button
                   onClick={() => toolbarFileRef.current?.click()}
-                  disabled={Boolean(planner.pendingChange)}
+                  disabled={excelDisabled}
                 >
                   <span>↥</span>
                   <span><strong>Импортировать</strong><small>.xlsx, активный лист</small></span>
                 </button>
-                <button onClick={() => void runExport()}>
+                <button onClick={() => void runExport()} disabled={exportBusy}>
                   <span>↧</span>
-                  <span><strong>Экспортировать</strong><small>Текущий снимок плана</small></span>
+                  <span><strong>Экспортировать</strong><small>Актуальный план в .xlsx</small></span>
                 </button>
               </div>
             )}
@@ -329,7 +383,7 @@ function App() {
               aria-label="Выбрать Excel для импорта"
               type="file"
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              disabled={busy || Boolean(planner.pendingChange)}
+              disabled={excelDisabled}
               onChange={(event) => {
                 const file = event.target.files?.[0]
                 if (file) beginImport(file)
@@ -337,118 +391,125 @@ function App() {
               }}
             />
           </div>
-          <button className="toolbar-button restore-button" onClick={() => void restoreDemo()} disabled={busy}>
-            ↺ <span>Восстановить демо</span>
+          <button
+            className="toolbar-button restore-button"
+            onClick={() => void restoreDemo()}
+            disabled={planMutationBusy}
+          >
+            ↺ <span>Восстановить пример</span>
           </button>
           <button
-            className="ai-toolbar-button"
+            className={`ai-toolbar-button ${drawerOpen ? 'active' : ''}`}
             aria-label="AI-помощник"
-            onClick={() => setDrawerOpen(true)}
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen((open) => !open)}
           >
-            <span>✦</span> AI-помощник
+            <span>✦</span> AI
           </button>
         </div>
       </header>
 
-      <main className="workspace">
-        <section className="hero-copy" aria-labelledby="plan-title">
-          <div>
-            <p className="eyebrow">Текущий план</p>
-            <h2 id="plan-title">Проект на одной временной шкале</h2>
-            <p>Все даты и зависимости рассчитаны детерминированным backend.</p>
-          </div>
-          <div className="plan-stats" aria-label="Статистика плана">
-            <div><strong>{plan?.tasks.length ?? '—'}</strong><span>задач</span></div>
-            <div><strong>{plan ? new Set(plan.tasks.map((task) => task.assignee).filter(Boolean)).size : '—'}</strong><span>исполнителей</span></div>
-          </div>
-        </section>
-
-        {error && <div className="feedback error" role="alert"><span>!</span>{error}</div>}
-        {notice && <div className="feedback success" role="status"><span>✓</span>{notice}</div>}
-        {importIssues.length > 0 && (
-          <section className="validation-panel" aria-labelledby="validation-title">
+      <div className={`workspace-layout ${drawerOpen ? 'with-ai' : ''}`}>
+        <main className="workspace">
+          <section className="workspace-heading" aria-labelledby="plan-title">
             <div>
-              <p className="eyebrow">Импорт не применён</p>
-              <h3 id="validation-title">Исправьте ошибки в Excel</h3>
+              <p className="eyebrow">Рабочая область</p>
+              <h2 id="plan-title">План проекта</h2>
             </div>
-            <ul>
-              {importIssues.map((issue, index) => (
-                <li key={`${issue.code}-${issue.row}-${index}`}>
-                  <strong>{issue.row ? `Строка ${issue.row}` : issue.code}</strong>
-                  <span>{issue.message}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="plan-stats" aria-label="Статистика плана">
+              <span><strong>{plan?.tasks.length ?? '—'}</strong> задач</span>
+              <span>
+                <strong>
+                  {plan
+                    ? new Set(
+                        plan.tasks.map((task) => task.assignee).filter(Boolean),
+                      ).size
+                    : '—'}
+                </strong>{' '}
+                исполнителей
+              </span>
+            </div>
           </section>
-        )}
 
-        {planner.pendingChange && (
-          <PendingPanel
+          {error && <div className="feedback error" role="alert"><span>!</span>{error}</div>}
+          {notice && <div className="feedback success" role="status"><span>✓</span>{notice}</div>}
+          {importIssues.length > 0 && (
+            <section className="validation-panel" aria-labelledby="validation-title">
+              <div>
+                <p className="eyebrow">Импорт не применён</p>
+                <h3 id="validation-title">Исправьте ошибки в Excel</h3>
+              </div>
+              <ul>
+                {importIssues.map((issue, index) => (
+                  <li key={`${issue.code}-${issue.row}-${index}`}>
+                    <strong>{issue.row ? `Строка ${issue.row}` : issue.code}</strong>
+                    <span>{issue.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {planner.pendingChange && (
+            <PendingPanel
+              pending={planner.pendingChange}
+              busy={applyBusy}
+              onApply={() => void applyPending()}
+              onCancel={cancelPending}
+            />
+          )}
+
+          <section className="gantt-card" aria-label="Диаграмма Гантта">
+            <div className="gantt-card-header">
+              <div className="legend">
+                <span><i className="legend-dot active" />Задачи</span>
+                {planner.pendingChange && <span><i className="legend-dot affected" />Затронуты</span>}
+              </div>
+              <label className="view-control">
+                Масштаб
+                <select value={viewMode} onChange={(event) => setViewMode(event.target.value as typeof viewMode)}>
+                  <option value="Day">Дни</option>
+                  <option value="Week">Недели</option>
+                  <option value="Month">Месяцы</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="gantt-stage">
+              {!plan && !error && seedLoading && (
+                <div className="loading-state"><span />Загружаем план…</div>
+              )}
+              {plan && (
+                <GanttChart
+                  plan={plan}
+                  affectedPublicIds={affectedPublicIds}
+                  viewMode={viewMode}
+                  scrollToStartToken={scrollToStartToken}
+                  onTaskSelect={selectTask}
+                />
+              )}
+            </div>
+            <div className="gantt-footer">
+              <span>Горизонтальная прокрутка перемещает временную шкалу</span>
+              <span>Нажмите задачу, чтобы открыть детали</span>
+            </div>
+          </section>
+        </main>
+
+        {drawerOpen && (
+          <AiDrawer
+            open
+            busy={chatBusy}
             pending={planner.pendingChange}
-            busy={busy}
-            onApply={() => void applyPending()}
-            onCancel={cancelPending}
+            messages={planner.conversationContext}
+            message={message}
+            onMessageChange={setMessage}
+            onSubmit={submitChat}
+            onClose={() => setDrawerOpen(false)}
+            onAttach={beginImport}
           />
         )}
-
-        <section className="gantt-card" aria-label="Диаграмма Гантта">
-          <div className="gantt-card-header">
-            <div className="legend">
-              <span><i className="legend-dot active" />Задачи</span>
-              {planner.pendingChange && <span><i className="legend-dot affected" />Затронуты</span>}
-            </div>
-            <label className="view-control">
-              Масштаб
-              <select value={viewMode} onChange={(event) => setViewMode(event.target.value as typeof viewMode)}>
-                <option value="Day">Дни</option>
-                <option value="Week">Недели</option>
-                <option value="Month">Месяцы</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="gantt-stage">
-            {!plan && !error && <div className="loading-state"><span />Загружаем демо-план…</div>}
-            {plan && (
-              <GanttChart
-                plan={plan}
-                affectedPublicIds={affectedPublicIds}
-                viewMode={viewMode}
-                scrollToStartToken={scrollToStartToken}
-                onTaskSelect={selectTask}
-              />
-            )}
-          </div>
-          <div className="gantt-footer">
-            <span>↔ Прокручивайте шкалу горизонтально</span>
-            <span>Выберите задачу, чтобы увидеть детали</span>
-          </div>
-        </section>
-      </main>
-
-      <button
-        className={`ai-fab ${drawerOpen ? 'drawer-visible' : ''}`}
-        onClick={() => setDrawerOpen(true)}
-        aria-label="Открыть AI-помощника"
-      >
-        <span>✦</span>
-        <strong>Спросить AI</strong>
-      </button>
-
-      {drawerOpen && <button className="drawer-scrim" aria-label="Закрыть панель" onClick={() => setDrawerOpen(false)} />}
-      {drawerOpen && (
-        <AiDrawer
-          open
-          busy={busy}
-          pending={planner.pendingChange}
-          messages={planner.conversationContext}
-          message={message}
-          onMessageChange={setMessage}
-          onSubmit={submitChat}
-          onClose={() => setDrawerOpen(false)}
-          onAttach={beginImport}
-        />
-      )}
+      </div>
 
       {selectedTask && plan && (
         <TaskModal plan={plan} task={selectedTask} onClose={() => setSelectedTask(null)} />
@@ -456,7 +517,7 @@ function App() {
       {importFile && (
         <ImportDialog
           file={importFile}
-          busy={busy}
+          busy={importBusy}
           onClose={() => setImportFile(null)}
           onSubmit={submitImport}
         />
