@@ -5,6 +5,8 @@ import type {
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
+const CURRENT_LABEL_HORIZONTAL_PADDING = 7
+const MISSING_ATTRIBUTE = '__gantt_preview_missing__'
 
 export type GanttDateScale = {
   timelineStart: Date
@@ -201,6 +203,140 @@ function createSvgElement<K extends keyof SVGElementTagNameMap>(
   return element
 }
 
+function compactTaskNumber(publicId: string): string {
+  const match = /^TASK-(\d+)$/i.exec(publicId)
+  if (!match) return publicId
+  return match[1].replace(/^0+(?=\d)/, '')
+}
+
+function renderedTextWidth(text: SVGTextElement): number {
+  if (typeof text.getComputedTextLength === 'function') {
+    const width = text.getComputedTextLength()
+    if (Number.isFinite(width) && width >= 0) return width
+  }
+  if (typeof text.getBBox === 'function') {
+    const width = text.getBBox().width
+    if (Number.isFinite(width) && width >= 0) return width
+  }
+  return Number.POSITIVE_INFINITY
+}
+
+function temporaryAttribute(
+  element: Element,
+  name: string,
+  value: string,
+): void {
+  const originalAttribute = `data-gantt-preview-original-${name}`
+  if (!element.hasAttribute(originalAttribute)) {
+    element.setAttribute(
+      originalAttribute,
+      element.hasAttribute(name)
+        ? element.getAttribute(name) ?? ''
+        : MISSING_ATTRIBUTE,
+    )
+  }
+  element.setAttribute(name, value)
+}
+
+function restoreTemporaryAttribute(element: Element, name: string): void {
+  const originalAttribute = `data-gantt-preview-original-${name}`
+  const originalValue = element.getAttribute(originalAttribute)
+  if (originalValue === null) return
+  if (originalValue === MISSING_ATTRIBUTE) element.removeAttribute(name)
+  else element.setAttribute(name, originalValue)
+  element.removeAttribute(originalAttribute)
+}
+
+function restorePreviewCurrentLabels(container: HTMLElement): void {
+  container
+    .querySelectorAll<SVGTextElement>('.gantt-preview-frappe-label-hidden')
+    .forEach((label) => {
+      label.classList.remove('gantt-preview-frappe-label-hidden')
+      restoreTemporaryAttribute(label, 'aria-hidden')
+    })
+  container
+    .querySelectorAll<SVGGElement>(
+      '[data-gantt-preview-original-aria-label]',
+    )
+    .forEach((group) => {
+      group.classList.remove('gantt-preview-accessible-task')
+      restoreTemporaryAttribute(group, 'aria-label')
+      restoreTemporaryAttribute(group, 'role')
+      group.querySelector('.gantt-preview-task-title')?.remove()
+    })
+}
+
+function prepareCurrentTaskAccessibility(
+  group: SVGGElement,
+  change: PendingTaskPreview,
+): void {
+  if (!change.currentTask) return
+  const identity = `${change.publicId} · ${change.currentTask.name}`
+  group.classList.add('gantt-preview-accessible-task')
+  temporaryAttribute(group, 'aria-label', identity)
+  temporaryAttribute(group, 'role', 'button')
+  group.prepend(createSvgElement('title', {
+    class: 'gantt-preview-task-title',
+  }, identity))
+  const frappeLabel = group.querySelector<SVGTextElement>('.bar-label')
+  if (frappeLabel) {
+    frappeLabel.classList.add('gantt-preview-frappe-label-hidden')
+    temporaryAttribute(frappeLabel, 'aria-hidden', 'true')
+  }
+}
+
+function renderPreviewSafeLabel(
+  item: SVGGElement,
+  change: PendingTaskPreview,
+  current: GanttBarGeometry,
+): void {
+  if (!change.currentTask) return
+  const fullLabel = `${compactTaskNumber(change.publicId)} · ${change.currentTask.name}`
+  const numberLabel = compactTaskNumber(change.publicId)
+  const clipId = `gantt-preview-current-clip-${change.publicId}`
+  const clipPath = createSvgElement('clipPath', {
+    id: clipId,
+    class: 'gantt-preview-current-label-clip',
+  })
+  clipPath.appendChild(createSvgElement('rect', {
+    x: current.x,
+    y: current.y,
+    width: current.width,
+    height: current.height,
+    rx: 6,
+    ry: 6,
+  }))
+  item.appendChild(clipPath)
+
+  const label = createSvgElement('text', {
+    class: 'gantt-preview-safe-label',
+    y: current.y + current.height / 2,
+    'clip-path': `url(#${clipId})`,
+    'aria-hidden': 'true',
+  }, fullLabel)
+  item.appendChild(label)
+  const availableWidth = Math.max(
+    0,
+    current.width - CURRENT_LABEL_HORIZONTAL_PADDING * 2,
+  )
+  if (renderedTextWidth(label) <= availableWidth) {
+    label.setAttribute('x', String(current.x + CURRENT_LABEL_HORIZONTAL_PADDING))
+    label.setAttribute('data-label-mode', 'full')
+    return
+  }
+
+  label.textContent = numberLabel
+  if (renderedTextWidth(label) <= availableWidth) {
+    label.setAttribute('x', String(current.x + current.width / 2))
+    label.setAttribute('text-anchor', 'middle')
+    label.setAttribute('data-label-mode', 'number')
+    return
+  }
+
+  label.remove()
+  item.setAttribute('data-label-mode', 'hidden')
+}
+
 function connectorArrowPath(connector: GanttPreviewConnector): string {
   const { x2, y } = connector
   if (connector.direction === 'right') {
@@ -211,58 +347,67 @@ function connectorArrowPath(connector: GanttPreviewConnector): string {
 
 function renderPreviewItem(
   layer: SVGGElement,
-  geometry: SameRowPreviewGeometry,
+  change: PendingTaskPreview,
+  current: GanttBarGeometry,
+  geometry: SameRowPreviewGeometry | null,
 ): void {
-  const item = createSvgElement('g', {
+  const attributes: Record<string, string | number> = {
     class: 'gantt-preview-item',
-    'data-task-id': geometry.taskPublicId,
-    'data-source': geometry.source,
-    'data-direction': geometry.direction,
-    'data-overlap': String(geometry.overlapsCurrent),
-    'data-current-y': geometry.currentY,
-    'data-proposed-y': geometry.proposedY,
-  })
-  item.appendChild(createSvgElement('rect', {
-    class: [
-      'gantt-preview-proposed-bar',
-      `gantt-preview-proposed-${geometry.source}`,
-    ].join(' '),
-    x: geometry.proposedX,
-    y: geometry.proposedY,
-    width: geometry.proposedWidth,
-    height: geometry.proposedHeight,
-    rx: 6,
-    ry: 6,
-  }))
-
-  if (geometry.direction === 'resize') {
-    item.appendChild(createSvgElement('line', {
-      class: 'gantt-preview-resize-edge',
-      x1: geometry.proposedEndX,
-      x2: geometry.proposedEndX,
-      y1: geometry.proposedY + 2,
-      y2: geometry.proposedY + geometry.proposedHeight - 2,
-    }))
+    'data-task-id': change.publicId,
+    'data-source': change.source,
+    'data-current-y': current.y,
   }
+  if (geometry) {
+    attributes['data-direction'] = geometry.direction
+    attributes['data-overlap'] = String(geometry.overlapsCurrent)
+    attributes['data-proposed-y'] = geometry.proposedY
+  }
+  const item = createSvgElement('g', attributes)
+  if (geometry) {
+    item.appendChild(createSvgElement('rect', {
+      class: [
+        'gantt-preview-proposed-bar',
+        `gantt-preview-proposed-${geometry.source}`,
+      ].join(' '),
+      x: geometry.proposedX,
+      y: geometry.proposedY,
+      width: geometry.proposedWidth,
+      height: geometry.proposedHeight,
+      rx: 6,
+      ry: 6,
+    }))
 
-  if (geometry.connector) {
-    item.appendChild(createSvgElement('line', {
-      class: 'gantt-preview-connector',
-      x1: geometry.connector.x1,
-      x2: geometry.connector.x2,
-      y1: geometry.connector.y,
-      y2: geometry.connector.y,
-    }))
-    item.appendChild(createSvgElement('path', {
-      class: 'gantt-preview-arrowhead',
-      d: connectorArrowPath(geometry.connector),
-    }))
+    if (geometry.direction === 'resize') {
+      item.appendChild(createSvgElement('line', {
+        class: 'gantt-preview-resize-edge',
+        x1: geometry.proposedEndX,
+        x2: geometry.proposedEndX,
+        y1: geometry.proposedY + 2,
+        y2: geometry.proposedY + geometry.proposedHeight - 2,
+      }))
+    }
+
+    if (geometry.connector) {
+      item.appendChild(createSvgElement('line', {
+        class: 'gantt-preview-connector',
+        x1: geometry.connector.x1,
+        x2: geometry.connector.x2,
+        y1: geometry.connector.y,
+        y2: geometry.connector.y,
+      }))
+      item.appendChild(createSvgElement('path', {
+        class: 'gantt-preview-arrowhead',
+        d: connectorArrowPath(geometry.connector),
+      }))
+    }
   }
 
   layer.appendChild(item)
+  renderPreviewSafeLabel(item, change, current)
 }
 
 export function removeGanttPreviewOverlay(container: HTMLElement): void {
+  restorePreviewCurrentLabels(container)
   container.querySelector('.gantt-preview-overlay')?.remove()
 }
 
@@ -300,18 +445,20 @@ export function renderGanttPreviewOverlay(
     'aria-hidden': 'true',
     'pointer-events': 'none',
   })
+  svg.appendChild(layer)
 
   for (const change of preview.changes) {
     const group = groups.get(change.publicId)
     const current = group && barGeometry(group)
     if (!current) continue
+    prepareCurrentTaskAccessibility(group, change)
     const geometry = resolveSameRowPreviewGeometry(
       change,
       current,
       (value) => timelineDateX(value, scale),
     )
-    if (geometry) renderPreviewItem(layer, geometry)
+    renderPreviewItem(layer, change, current, geometry)
   }
 
-  if (layer.childElementCount > 0) svg.appendChild(layer)
+  if (layer.childElementCount === 0) layer.remove()
 }

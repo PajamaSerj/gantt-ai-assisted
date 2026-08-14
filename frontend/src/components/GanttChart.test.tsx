@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react'
+import { act, fireEvent, render } from '@testing-library/react'
 import type { GanttOptions, GanttTask } from 'frappe-gantt'
 import type { ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -41,6 +41,17 @@ class ResizeObserverMock implements ResizeObserver {
 
   disconnect(): void {}
   unobserve(): void {}
+}
+
+class PointerEventMock extends MouseEvent {
+  readonly pointerId: number
+  readonly isPrimary: boolean
+
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init)
+    this.pointerId = init.pointerId ?? 0
+    this.isPrimary = init.isPrimary ?? true
+  }
 }
 
 vi.mock('frappe-gantt', () => ({
@@ -92,6 +103,11 @@ vi.mock('frappe-gantt', () => ({
         )).join('') +
         '</svg></div>'
       )
+      ganttMock.tasks.forEach((task) => {
+        container.querySelector(
+          `.bar-wrapper[data-id="${task.id}"]`,
+        )?.addEventListener('click', () => options.on_click?.(task))
+      })
     }
 
     refresh(tasks: GanttTask[]): void {
@@ -168,6 +184,48 @@ function resizeChart(width: number): void {
   act(() => resizeMock.callback?.([entry], {} as ResizeObserver))
 }
 
+function taskPart(
+  container: HTMLElement,
+  taskPublicId: string,
+  selector = '.bar-wrapper',
+): Element {
+  const element = container.querySelector(
+    `.bar-wrapper[data-id="${taskPublicId}"] ${selector === '.bar-wrapper' ? '' : selector}`.trim(),
+  )
+  if (!element) throw new Error(`Expected ${selector} for ${taskPublicId}`)
+  return element
+}
+
+function pointerGesture(
+  target: Element,
+  start: { x: number; y: number },
+  end = start,
+  pointerId = 1,
+): void {
+  fireEvent.pointerDown(target, {
+    pointerId,
+    button: 0,
+    isPrimary: true,
+    clientX: start.x,
+    clientY: start.y,
+  })
+  if (end.x !== start.x || end.y !== start.y) {
+    fireEvent.pointerMove(target, {
+      pointerId,
+      isPrimary: true,
+      clientX: end.x,
+      clientY: end.y,
+    })
+  }
+  fireEvent.pointerUp(target, {
+    pointerId,
+    button: 0,
+    isPrimary: true,
+    clientX: end.x,
+    clientY: end.y,
+  })
+}
+
 beforeEach(() => {
   ganttMock.options = null
   ganttMock.tasks = []
@@ -179,9 +237,21 @@ beforeEach(() => {
   resizeMock.callback = null
   resizeMock.target = null
   vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+  vi.stubGlobal('PointerEvent', PointerEventMock)
+  Object.defineProperty(SVGElement.prototype, 'getComputedTextLength', {
+    configurable: true,
+    value(this: SVGElement) {
+      return (this.textContent?.length ?? 0) * 6
+    },
+  })
 })
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  delete (SVGElement.prototype as SVGElement & {
+    getComputedTextLength?: () => number
+  }).getComputedTextLength
+  vi.unstubAllGlobals()
+})
 
 describe('interactive Gantt integration', () => {
   it('keeps one Gantt instance when only direct-edit busy state changes', () => {
@@ -218,9 +288,12 @@ describe('interactive Gantt integration', () => {
 
   it('keeps a plain task click opening details and hides left resize', () => {
     const { container, props } = renderChart()
+    const task = taskPart(container, 'TASK-001')
 
-    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
+    pointerGesture(task, { x: 100, y: 110 })
+    fireEvent.click(task)
 
+    expect(props.onTaskSelect).toHaveBeenCalledTimes(1)
     expect(props.onTaskSelect).toHaveBeenCalledWith(props.plan.tasks[0])
     expect(props.onDirectEdit).not.toHaveBeenCalled()
     const left = container.querySelector<SVGElement>('.handle.left')
@@ -231,6 +304,95 @@ describe('interactive Gantt integration', () => {
       mode: 'Week',
       maintainPosition: false,
     })
+  })
+
+  it('consumes an unchanged micro-drag and lets the next click open details', () => {
+    const { container, props } = renderChart()
+    const task = taskPart(container, 'TASK-001')
+
+    pointerGesture(task, { x: 100, y: 110 }, { x: 104, y: 110 })
+    fireEvent.click(task)
+
+    expect(props.onDirectEdit).not.toHaveBeenCalled()
+    expect(props.onTaskSelect).not.toHaveBeenCalled()
+
+    pointerGesture(task, { x: 100, y: 110 })
+    fireEvent.click(task)
+
+    expect(props.onTaskSelect).toHaveBeenCalledTimes(1)
+    expect(props.onTaskSelect).toHaveBeenCalledWith(props.plan.tasks[0])
+  })
+
+  it('keeps delayed clicks suppressed through a real drag request', async () => {
+    let completeRequest: () => void = () => undefined
+    const request = new Promise<void>((resolve) => {
+      completeRequest = resolve
+    })
+    const onDirectEdit = vi.fn(() => request)
+    const chart = renderChart({ onDirectEdit })
+    const task = taskPart(chart.container, 'TASK-001')
+
+    pointerGesture(task, { x: 100, y: 110 }, { x: 112, y: 110 })
+    act(() => {
+      ganttMock.options?.on_date_change?.(
+        ganttMock.tasks[0],
+        new Date(2026, 1, 3, 12),
+        new Date(2026, 1, 5, 12),
+      )
+      document.dispatchEvent(new MouseEvent('mouseup'))
+    })
+
+    expect(onDirectEdit).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      completeRequest()
+      await new Promise((resolve) => window.setTimeout(resolve, 30))
+    })
+    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
+    expect(chart.props.onTaskSelect).not.toHaveBeenCalled()
+
+    pointerGesture(task, { x: 100, y: 110 }, undefined, 2)
+    fireEvent.click(task)
+
+    expect(chart.props.onTaskSelect).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats the right resize handle as a gesture even without movement', () => {
+    const { container, props } = renderChart()
+    const rightHandle = taskPart(container, 'TASK-001', '.handle.right')
+
+    pointerGesture(rightHandle, { x: 160, y: 110 })
+    fireEvent.click(rightHandle)
+
+    expect(props.onDirectEdit).not.toHaveBeenCalled()
+    expect(props.onTaskSelect).not.toHaveBeenCalled()
+  })
+
+  it('emits one resize intent and suppresses its task click', () => {
+    const { container, plan, props } = renderChart()
+    const rightHandle = taskPart(container, 'TASK-001', '.handle.right')
+
+    pointerGesture(
+      rightHandle,
+      { x: 160, y: 110 },
+      { x: 172, y: 110 },
+    )
+    act(() => {
+      ganttMock.options?.on_date_change?.(
+        ganttMock.tasks[0],
+        new Date(2026, 1, 2, 12),
+        new Date(2026, 1, 6, 12),
+      )
+      document.dispatchEvent(new MouseEvent('mouseup'))
+      ganttMock.options?.on_click?.(ganttMock.tasks[0])
+    })
+
+    expect(props.onDirectEdit).toHaveBeenCalledTimes(1)
+    expect(props.onDirectEdit).toHaveBeenCalledWith({
+      type: 'resize',
+      task: plan.tasks[0],
+      intendedDate: '2026-02-06',
+    })
+    expect(props.onTaskSelect).not.toHaveBeenCalled()
   })
 
   it('emits one move intent on drop and never mutates PlanState directly', () => {
@@ -481,8 +643,53 @@ describe('interactive Gantt integration', () => {
     )).toHaveClass('gantt-preview-proposed-dependency')
     expect(chart.container.querySelectorAll('.bar-label')).toHaveLength(7)
     expect(chart.container.querySelectorAll(
-      '.gantt-preview-overlay text',
+      '.bar-label.gantt-preview-frappe-label-hidden',
+    )).toHaveLength(4)
+    expect(chart.container.querySelector(
+      '.bar-wrapper[data-id="TASK-001"] .bar-label',
+    )).not.toHaveClass('gantt-preview-frappe-label-hidden')
+    expect(chart.container.querySelectorAll(
+      '.gantt-preview-safe-label',
+    )).toHaveLength(4)
+    const wideLabel = chart.container.querySelector<SVGTextElement>(
+      '.gantt-preview-item[data-task-id="TASK-003"] ' +
+      '.gantt-preview-safe-label',
+    )
+    expect(wideLabel).toHaveAttribute('data-label-mode', 'full')
+    expect(wideLabel).toHaveTextContent('3 · Основа бэкенда')
+    const shortLabel = chart.container.querySelector<SVGTextElement>(
+      '.gantt-preview-item[data-task-id="TASK-007"] ' +
+      '.gantt-preview-safe-label',
+    )
+    expect(shortLabel).toHaveAttribute('data-label-mode', 'number')
+    expect(shortLabel).toHaveTextContent('7')
+    expect(chart.container.querySelectorAll(
+      '.gantt-preview-overlay text:not(.gantt-preview-safe-label)',
     )).toHaveLength(0)
+    const task3Bar = chart.container.querySelector<SVGRectElement>(
+      '.bar-wrapper[data-id="TASK-003"] .bar',
+    )
+    const task3Clip = task3Overlay?.querySelector<SVGRectElement>(
+      '.gantt-preview-current-label-clip rect',
+    )
+    expect(task3Clip).toHaveAttribute('x', task3Bar?.getAttribute('x'))
+    expect(task3Clip).toHaveAttribute('y', task3Bar?.getAttribute('y'))
+    expect(task3Clip).toHaveAttribute('width', task3Bar?.getAttribute('width'))
+    expect(task3Clip).toHaveAttribute('height', task3Bar?.getAttribute('height'))
+    expect(Number(wideLabel?.getAttribute('x'))).toBeGreaterThanOrEqual(
+      Number(task3Bar?.getAttribute('x')),
+    )
+    expect(task3Overlay?.lastElementChild).toBe(wideLabel)
+    const task3Group = chart.container.querySelector(
+      '.bar-wrapper[data-id="TASK-003"]',
+    )
+    expect(task3Group).toHaveAttribute(
+      'aria-label',
+      'TASK-003 · Основа бэкенда',
+    )
+    expect(task3Group?.querySelector('.gantt-preview-task-title')).toHaveTextContent(
+      'TASK-003 · Основа бэкенда',
+    )
     expect(chart.container.querySelectorAll(
       '.gantt-preview-current-label',
     )).toHaveLength(0)
@@ -494,6 +701,45 @@ describe('interactive Gantt integration', () => {
       '459',
     )
     expect(chart.container.querySelector('animate')).not.toBeInTheDocument()
+  })
+
+  it('keeps the current label above a partially overlapping outline', async () => {
+    const { current, changeset } = makeSergeyPendingScenario()
+    const preview = buildPendingPlanPreview(current, changeset)
+    if (!preview) throw new Error('Expected pending preview')
+    const overlapPreview = structuredClone(preview)
+    const overlapChange = overlapPreview.changes.find(
+      (change) => change.publicId === 'TASK-003',
+    )
+    if (!overlapChange?.proposedTask) {
+      throw new Error('Expected TASK-003 proposed dates')
+    }
+    overlapChange.proposedTask = {
+      ...overlapChange.proposedTask,
+      start_date: '2026-02-09',
+      end_date: '2026-02-13',
+    }
+
+    const chart = renderChart({
+      plan: current,
+      preview: overlapPreview,
+      interactionDisabled: true,
+    })
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30))
+    })
+
+    const item = chart.container.querySelector(
+      '.gantt-preview-item[data-task-id="TASK-003"]',
+    )
+    const proposedBar = item?.querySelector('.gantt-preview-proposed-bar')
+    const safeLabel = item?.querySelector('.gantt-preview-safe-label')
+    expect(item).toHaveAttribute('data-overlap', 'true')
+    expect(safeLabel).toHaveAttribute('data-label-mode', 'full')
+    expect(safeLabel).toHaveTextContent('3 · Основа бэкенда')
+    expect(Array.from(item?.children ?? []).indexOf(proposedBar!)).toBeLessThan(
+      Array.from(item?.children ?? []).indexOf(safeLabel!),
+    )
   })
 
   it('removes preview overlays on Apply and reconciles proposed dates', async () => {
@@ -517,6 +763,15 @@ describe('interactive Gantt integration', () => {
     />)
 
     expect(chart.container.querySelector('.gantt-preview-overlay')).toBeNull()
+    expect(chart.container.querySelectorAll(
+      '.gantt-preview-frappe-label-hidden',
+    )).toHaveLength(0)
+    expect(chart.container.querySelectorAll(
+      '.gantt-preview-task-title',
+    )).toHaveLength(0)
+    expect(chart.container.querySelector(
+      '.bar-wrapper[data-id="TASK-003"]',
+    )).not.toHaveAttribute('aria-label')
     expect(chart.container.querySelector(
       '.bar-wrapper[data-id="TASK-003"] .bar',
     )).toHaveAttribute('data-start', '2026-02-12')
@@ -547,6 +802,15 @@ describe('interactive Gantt integration', () => {
 
     expect(current).toEqual(snapshot)
     expect(chart.container.querySelector('.gantt-preview-overlay')).toBeNull()
+    expect(chart.container.querySelectorAll(
+      '.gantt-preview-frappe-label-hidden',
+    )).toHaveLength(0)
+    expect(chart.container.querySelectorAll(
+      '.gantt-preview-task-title',
+    )).toHaveLength(0)
+    expect(chart.container.querySelector(
+      '.bar-wrapper[data-id="TASK-003"]',
+    )).not.toHaveAttribute('aria-label')
     expect(chart.container.querySelector(
       '.bar-wrapper[data-id="TASK-003"] .bar',
     )).toHaveAttribute('data-start', '2026-02-05')
@@ -559,10 +823,23 @@ describe('interactive Gantt integration', () => {
   it('disables drag and resize whenever a pending ChangeSet exists', () => {
     const { current, changeset } = makeSergeyPendingScenario()
     const preview = buildPendingPlanPreview(current, changeset)
-    renderChart({ plan: current, preview, interactionDisabled: true })
+    const onTaskSelect = vi.fn()
+    const onDirectEdit = vi.fn()
+    const chart = renderChart({
+      plan: current,
+      preview,
+      interactionDisabled: true,
+      onTaskSelect,
+      onDirectEdit,
+    })
+    const task = taskPart(chart.container, 'TASK-001')
+    pointerGesture(task, { x: 100, y: 110 }, { x: 112, y: 110 })
+    fireEvent.click(task)
 
     expect(ganttMock.options?.readonly).toBe(true)
     expect(ganttMock.options?.readonly_dates).toBe(true)
+    expect(onDirectEdit).not.toHaveBeenCalled()
+    expect(onTaskSelect).not.toHaveBeenCalled()
   })
 
   it('rebuilds viewport-filling columns when the Gantt container changes width', () => {

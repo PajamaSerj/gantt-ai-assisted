@@ -49,6 +49,29 @@ type DirectEditSession = {
   taskPublicId: string
 }
 
+type GanttGestureTarget = 'task-body' | 'right-resize'
+
+type GanttGestureSession = {
+  pointerId: number
+  taskPublicId: string
+  originX: number
+  originY: number
+  currentX: number
+  currentY: number
+  maximumMovement: number
+  target: GanttGestureTarget
+  crossedThreshold: boolean
+  captureTarget: SVGGElement
+}
+
+type GanttGestureHit = {
+  taskPublicId: string
+  target: GanttGestureTarget
+  wrapper: SVGGElement
+}
+
+const GANTT_GESTURE_THRESHOLD = 3
+
 type GanttWithArrows = Gantt & {
   arrows?: Array<{ update: () => void }>
 }
@@ -160,6 +183,51 @@ function highlightAffectedArrows(
     })
 }
 
+function ganttGestureHit(
+  container: HTMLElement,
+  eventTarget: EventTarget | null,
+): GanttGestureHit | null {
+  if (!(eventTarget instanceof Element)) return null
+  const wrapper = eventTarget.closest<SVGGElement>(
+    '.bar-wrapper[data-id]',
+  )
+  if (!wrapper || !container.contains(wrapper)) return null
+  const taskPublicId = wrapper.dataset.id
+  if (!taskPublicId || eventTarget.closest('.handle.left')) return null
+  return {
+    taskPublicId,
+    target: eventTarget.closest('.handle.right')
+      ? 'right-resize'
+      : 'task-body',
+    wrapper,
+  }
+}
+
+function releaseGestureCapture(session: GanttGestureSession): void {
+  if (
+    typeof session.captureTarget.hasPointerCapture !== 'function' ||
+    typeof session.captureTarget.releasePointerCapture !== 'function' ||
+    !session.captureTarget.hasPointerCapture(session.pointerId)
+  ) return
+  session.captureTarget.releasePointerCapture(session.pointerId)
+}
+
+function updateGestureMovement(
+  session: GanttGestureSession,
+  event: PointerEvent,
+): void {
+  session.currentX = event.clientX
+  session.currentY = event.clientY
+  const movement = Math.hypot(
+    session.currentX - session.originX,
+    session.currentY - session.originY,
+  )
+  session.maximumMovement = Math.max(session.maximumMovement, movement)
+  if (session.maximumMovement >= GANTT_GESTURE_THRESHOLD) {
+    session.crossedThreshold = true
+  }
+}
+
 export function GanttChart({
   plan,
   preview,
@@ -185,8 +253,8 @@ export function GanttChart({
   const scrollLeftRef = useRef<number | null>(null)
   const scrollTokenRef = useRef<number | null>(null)
   const pendingDatesRef = useRef<ProvisionalGanttDates | null>(null)
-  const suppressClickRef = useRef(false)
-  const clickResetTimerRef = useRef<number | null>(null)
+  const gestureSessionRef = useRef<GanttGestureSession | null>(null)
+  const suppressNextClickTaskIdRef = useRef<string | null>(null)
   const previewOverlayFrameRef = useRef<number | null>(null)
   const directEditCompletionFrameRef = useRef<number | null>(null)
   const directEditSessionRef = useRef<DirectEditSession | null>(null)
@@ -280,9 +348,11 @@ export function GanttChart({
     mountedRef.current = true
     return () => {
       mountedRef.current = false
-      if (clickResetTimerRef.current !== null) {
-        window.clearTimeout(clickResetTimerRef.current)
+      if (gestureSessionRef.current) {
+        releaseGestureCapture(gestureSessionRef.current)
       }
+      gestureSessionRef.current = null
+      suppressNextClickTaskIdRef.current = null
       if (previewOverlayFrameRef.current !== null) {
         window.cancelAnimationFrame(previewOverlayFrameRef.current)
       }
@@ -299,6 +369,17 @@ export function GanttChart({
     if (renderedTasks.length === 0) return
     const taskBounds = ganttTaskBounds(renderedTasks)
     const forcePlanStart = scrollTokenRef.current !== scrollToStartToken
+    const interactionLocked = () => (
+      interactionDisabledRef.current || interactionBusyRef.current ||
+      directEditPendingRef.current || Boolean(previewRef.current)
+    )
+    const consumeTaskClick = (taskPublicId: string): boolean => {
+      if (suppressNextClickTaskIdRef.current === taskPublicId) {
+        suppressNextClickTaskIdRef.current = null
+        return true
+      }
+      return interactionLocked()
+    }
     chartRef.current = new Gantt(container, renderedTasks, {
       ...GANTT_SAFETY_OPTIONS,
       ...ganttInteractionOptions(Boolean(previewRef.current)),
@@ -314,7 +395,7 @@ export function GanttChart({
       bar_height: 32,
       padding: 20,
       on_click: (selected) => {
-        if (suppressClickRef.current) return
+        if (consumeTaskClick(selected.id)) return
         const task = taskByGanttIdRef.current.get(selected.id)
         if (task) onTaskSelectRef.current(task)
       },
@@ -329,7 +410,7 @@ export function GanttChart({
           start,
           end,
         }
-        suppressClickRef.current = true
+        suppressNextClickTaskIdRef.current = selected.id
       },
     })
 
@@ -338,6 +419,69 @@ export function GanttChart({
     schedulePreviewOverlay(container)
     renderedTasksRef.current = taskSnapshotMap(renderedTasks)
     renderedDataSignatureRef.current = latestDataSignatureRef.current
+
+    const startGesture = (event: PointerEvent) => {
+      if (
+        event.button !== 0 || event.isPrimary === false || interactionLocked()
+      ) return
+      const hit = ganttGestureHit(container, event.target)
+      if (!hit) return
+      if (gestureSessionRef.current) {
+        releaseGestureCapture(gestureSessionRef.current)
+      }
+      suppressNextClickTaskIdRef.current = null
+      if (typeof hit.wrapper.setPointerCapture === 'function') {
+        hit.wrapper.setPointerCapture(event.pointerId)
+      }
+      gestureSessionRef.current = {
+        pointerId: event.pointerId,
+        taskPublicId: hit.taskPublicId,
+        originX: event.clientX,
+        originY: event.clientY,
+        currentX: event.clientX,
+        currentY: event.clientY,
+        maximumMovement: 0,
+        target: hit.target,
+        crossedThreshold: false,
+        captureTarget: hit.wrapper,
+      }
+    }
+    const moveGesture = (event: PointerEvent) => {
+      const session = gestureSessionRef.current
+      if (!session || session.pointerId !== event.pointerId) return
+      updateGestureMovement(session, event)
+    }
+    const finishGesture = (event: PointerEvent) => {
+      const session = gestureSessionRef.current
+      if (!session || session.pointerId !== event.pointerId) return
+      updateGestureMovement(session, event)
+      if (session.target === 'right-resize' || session.crossedThreshold) {
+        suppressNextClickTaskIdRef.current = session.taskPublicId
+      }
+      releaseGestureCapture(session)
+      gestureSessionRef.current = null
+    }
+    const cancelGesture = (event: PointerEvent) => {
+      const session = gestureSessionRef.current
+      if (!session || session.pointerId !== event.pointerId) return
+      if (session.target === 'right-resize' || session.crossedThreshold) {
+        suppressNextClickTaskIdRef.current = session.taskPublicId
+      }
+      releaseGestureCapture(session)
+      gestureSessionRef.current = null
+    }
+    const suppressGestureClick = (event: MouseEvent) => {
+      const hit = ganttGestureHit(container, event.target)
+      if (!hit || !consumeTaskClick(hit.taskPublicId)) return
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+    }
+    container.addEventListener('pointerdown', startGesture, true)
+    container.addEventListener('pointermove', moveGesture, true)
+    container.addEventListener('pointerup', finishGesture, true)
+    container.addEventListener('pointercancel', cancelGesture, true)
+    container.addEventListener('click', suppressGestureClick, true)
 
     const finishInteraction = () => {
       const provisional = pendingDatesRef.current
@@ -384,14 +528,21 @@ export function GanttChart({
             },
           )
         })
+      } else {
+        const currentChart = chartRef.current
+        const currentContainer = containerRef.current
+        const authoritativeTask = latestTasksRef.current.find(
+          (candidate) => candidate.id === task.public_id,
+        )
+        if (currentChart && currentContainer && authoritativeTask) {
+          reconcileGanttTasks(
+            currentChart,
+            currentContainer,
+            [authoritativeTask],
+          )
+          schedulePreviewOverlay(currentContainer)
+        }
       }
-      if (clickResetTimerRef.current !== null) {
-        window.clearTimeout(clickResetTimerRef.current)
-      }
-      clickResetTimerRef.current = window.setTimeout(() => {
-        suppressClickRef.current = false
-        clickResetTimerRef.current = null
-      }, 250)
     }
     document.addEventListener('mouseup', finishInteraction)
     document.addEventListener('touchend', finishInteraction)
@@ -410,8 +561,18 @@ export function GanttChart({
     return () => {
       document.removeEventListener('mouseup', finishInteraction)
       document.removeEventListener('touchend', finishInteraction)
+      container.removeEventListener('pointerdown', startGesture, true)
+      container.removeEventListener('pointermove', moveGesture, true)
+      container.removeEventListener('pointerup', finishGesture, true)
+      container.removeEventListener('pointercancel', cancelGesture, true)
+      container.removeEventListener('click', suppressGestureClick, true)
       scroller?.removeEventListener('scroll', handleHorizontalScroll)
       pendingDatesRef.current = null
+      if (gestureSessionRef.current) {
+        releaseGestureCapture(gestureSessionRef.current)
+      }
+      gestureSessionRef.current = null
+      suppressNextClickTaskIdRef.current = null
       if (scroller) scrollLeftRef.current = scroller.scrollLeft
       chartRef.current = null
       renderedTasksRef.current = new Map()
@@ -442,6 +603,14 @@ export function GanttChart({
     renderedTasksRef.current = taskSnapshotMap(currentTasks)
     renderedDataSignatureRef.current = dataSignature
   }, [dataSignature, layoutSignature])
+
+  useLayoutEffect(() => {
+    if (gestureSessionRef.current) {
+      releaseGestureCapture(gestureSessionRef.current)
+    }
+    gestureSessionRef.current = null
+    suppressNextClickTaskIdRef.current = null
+  }, [previewSignature])
 
   useLayoutEffect(() => {
     const chart = chartRef.current

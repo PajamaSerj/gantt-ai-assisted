@@ -32,6 +32,12 @@ describe('planner layout CSS contract', () => {
     expect(appStyles).toMatch(
       /\.legend-dot\.dependency\s*\{[^}]*border-style:\s*dashed/s,
     )
+    expect(appStyles).toMatch(
+      /\.gantt-preview-frappe-label-hidden\s*\{[^}]*visibility:\s*hidden/s,
+    )
+    expect(appStyles).toMatch(
+      /\.gantt-preview-safe-label\s*\{[^}]*fill:\s*#fff/s,
+    )
     expect(appStyles).not.toContain('.gantt-preview-current-label')
     expect(appStyles).not.toContain('.gantt-preview-label-background')
     expect(appStyles).not.toContain('.gantt-preview-delta')

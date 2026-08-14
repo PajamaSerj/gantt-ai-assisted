@@ -644,6 +644,10 @@
   fill: #27344a;
 }
 
+.gantt-host .gantt .bar-label.gantt-preview-frappe-label-hidden {
+  visibility: hidden;
+}
+
 .gantt-host .gantt .arrow {
   stroke: #9aa8b9;
 }
@@ -704,6 +708,14 @@
   stroke: #b95e0d;
   stroke-width: 2.5px;
   vector-effect: non-scaling-stroke;
+}
+
+.gantt-host .gantt .gantt-preview-safe-label {
+  fill: #fff;
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 650;
+  dominant-baseline: central;
 }
 
 .gantt-host .upper-text,
