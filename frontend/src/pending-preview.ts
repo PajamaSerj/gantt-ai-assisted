@@ -163,7 +163,7 @@ export function formatPreviewDateRange(start: string, end: string): string {
   )
 }
 
-function signedWorkingDayDelta(start: string, end: string): number {
+export function signedWorkingDayDelta(start: string, end: string): number {
   if (start === end) return 0
   const cursor = new Date(`${start}T00:00:00Z`)
   const target = new Date(`${end}T00:00:00Z`)

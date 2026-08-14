@@ -8,14 +8,13 @@ import {
 import {
   directEditIntent,
   disableLeftResizeHandles,
-  keepProposedPreviewLabelsVisible,
   type ProvisionalGanttDates,
 } from '../gantt-interaction'
 import {
-  currentPreviewTaskId,
-  ganttPreviewTasks,
-  ganttTasks,
-} from '../gantt-tasks'
+  removeGanttPreviewOverlay,
+  renderGanttPreviewOverlay,
+} from '../gantt-preview-overlay'
+import { ganttTasks } from '../gantt-tasks'
 import {
   ganttTaskBounds,
   ganttTimelinePlan,
@@ -74,6 +73,21 @@ function taskSnapshotMap(tasks: GanttTask[]): Map<string, GanttTaskSnapshot> {
 
 function taskDataSignature(tasks: GanttTask[]): string {
   return JSON.stringify(tasks.map(taskSnapshot))
+}
+
+function previewDataSignature(preview: PendingPlanPreview | null): string {
+  if (!preview) return 'none'
+  return JSON.stringify(preview.changes.map((change) => ({
+    id: change.internalId,
+    kind: change.kind,
+    source: change.source,
+    currentStart: change.currentTask?.start_date,
+    currentEnd: change.currentTask?.end_date,
+    currentDuration: change.currentTask?.duration_workdays,
+    proposedStart: change.proposedTask?.start_date,
+    proposedEnd: change.proposedTask?.end_date,
+    proposedDuration: change.proposedTask?.duration_workdays,
+  })))
 }
 
 function chartLayoutSignature(
@@ -136,12 +150,13 @@ function highlightAffectedArrows(
     .forEach((arrow) => {
       const from = arrow.dataset.from
       const to = arrow.dataset.to
-      if (
-        (from && affectedPublicIds.has(from)) ||
-        (to && affectedPublicIds.has(to))
-      ) {
-        arrow.classList.add('gantt-arrow-affected')
-      }
+      arrow.classList.toggle(
+        'gantt-arrow-affected',
+        Boolean(
+          (from && affectedPublicIds.has(from)) ||
+          (to && affectedPublicIds.has(to)),
+        ),
+      )
     })
 }
 
@@ -172,7 +187,7 @@ export function GanttChart({
   const pendingDatesRef = useRef<ProvisionalGanttDates | null>(null)
   const suppressClickRef = useRef(false)
   const clickResetTimerRef = useRef<number | null>(null)
-  const labelPlacementFrameRef = useRef<number | null>(null)
+  const previewOverlayFrameRef = useRef<number | null>(null)
   const directEditCompletionFrameRef = useRef<number | null>(null)
   const directEditSessionRef = useRef<DirectEditSession | null>(null)
   const directEditPendingRef = useRef(false)
@@ -191,15 +206,17 @@ export function GanttChart({
   onTaskSelectRef.current = onTaskSelect
   onDirectEditRef.current = onDirectEdit
 
-  const tasks = preview
-    ? ganttPreviewTasks(preview)
-    : ganttTasks(plan, affectedPublicIds)
+  const tasks = ganttTasks(
+    plan,
+    preview ? new Set<string>() : affectedPublicIds,
+  )
   latestTasksRef.current = tasks
   const timelinePlan = ganttTimelinePlan(
     plan,
     preview?.proposedPlan ?? null,
   )
   const dataSignature = taskDataSignature(tasks)
+  const previewSignature = previewDataSignature(preview)
   const layoutSignature = chartLayoutSignature(
     tasks,
     timelinePlan,
@@ -213,17 +230,25 @@ export function GanttChart({
   const byGanttId = new Map<string, Task>()
   plan.tasks.forEach((task) => {
     byGanttId.set(task.public_id, task)
-    byGanttId.set(currentPreviewTaskId(task.public_id), task)
   })
   taskByGanttIdRef.current = byGanttId
 
-  const schedulePreviewLabelPlacement = (container: HTMLElement) => {
-    if (labelPlacementFrameRef.current !== null) {
-      window.cancelAnimationFrame(labelPlacementFrameRef.current)
+  const schedulePreviewOverlay = (container: HTMLElement) => {
+    if (previewOverlayFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewOverlayFrameRef.current)
     }
-    labelPlacementFrameRef.current = window.requestAnimationFrame(() => {
-      keepProposedPreviewLabelsVisible(container)
-      labelPlacementFrameRef.current = null
+    if (!previewRef.current) {
+      removeGanttPreviewOverlay(container)
+      previewOverlayFrameRef.current = null
+      return
+    }
+    previewOverlayFrameRef.current = window.requestAnimationFrame(() => {
+      renderGanttPreviewOverlay(
+        container,
+        previewRef.current,
+        chartRef.current ?? {},
+      )
+      previewOverlayFrameRef.current = null
     })
   }
 
@@ -258,8 +283,8 @@ export function GanttChart({
       if (clickResetTimerRef.current !== null) {
         window.clearTimeout(clickResetTimerRef.current)
       }
-      if (labelPlacementFrameRef.current !== null) {
-        window.cancelAnimationFrame(labelPlacementFrameRef.current)
+      if (previewOverlayFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewOverlayFrameRef.current)
       }
       if (directEditCompletionFrameRef.current !== null) {
         window.cancelAnimationFrame(directEditCompletionFrameRef.current)
@@ -310,7 +335,7 @@ export function GanttChart({
 
     chartRef.current.change_view_mode(viewModeRef.current, false)
     settleGanttRendering(container)
-    schedulePreviewLabelPlacement(container)
+    schedulePreviewOverlay(container)
     renderedTasksRef.current = taskSnapshotMap(renderedTasks)
     renderedDataSignatureRef.current = latestDataSignatureRef.current
 
@@ -349,7 +374,7 @@ export function GanttChart({
                     currentContainer,
                     [authoritativeTask],
                   )
-                  schedulePreviewLabelPlacement(currentContainer)
+                  schedulePreviewOverlay(currentContainer)
                 }
               }
               directEditSessionRef.current = null
@@ -372,6 +397,10 @@ export function GanttChart({
     document.addEventListener('touchend', finishInteraction)
 
     const scroller = container.querySelector<HTMLElement>('.gantt-container')
+    const handleHorizontalScroll = () => schedulePreviewOverlay(container)
+    scroller?.addEventListener('scroll', handleHorizontalScroll, {
+      passive: true,
+    })
     if (!forcePlanStart && scroller && scrollLeftRef.current !== null) {
       scroller.scrollLeft = scrollLeftRef.current
     }
@@ -381,14 +410,15 @@ export function GanttChart({
     return () => {
       document.removeEventListener('mouseup', finishInteraction)
       document.removeEventListener('touchend', finishInteraction)
+      scroller?.removeEventListener('scroll', handleHorizontalScroll)
       pendingDatesRef.current = null
       if (scroller) scrollLeftRef.current = scroller.scrollLeft
       chartRef.current = null
       renderedTasksRef.current = new Map()
       renderedDataSignatureRef.current = null
-      if (labelPlacementFrameRef.current !== null) {
-        window.cancelAnimationFrame(labelPlacementFrameRef.current)
-        labelPlacementFrameRef.current = null
+      if (previewOverlayFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewOverlayFrameRef.current)
+        previewOverlayFrameRef.current = null
       }
       container.replaceChildren()
     }
@@ -408,10 +438,37 @@ export function GanttChart({
       JSON.stringify(taskSnapshot(task))
     ))
     reconcileGanttTasks(chart, container, changedTasks)
-    schedulePreviewLabelPlacement(container)
+    schedulePreviewOverlay(container)
     renderedTasksRef.current = taskSnapshotMap(currentTasks)
     renderedDataSignatureRef.current = dataSignature
   }, [dataSignature, layoutSignature])
+
+  useLayoutEffect(() => {
+    const chart = chartRef.current
+    const container = containerRef.current
+    if (!container) return
+    highlightAffectedArrows(container, latestAffectedPublicIdsRef.current)
+    if (!preview) {
+      if (previewOverlayFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewOverlayFrameRef.current)
+        previewOverlayFrameRef.current = null
+      }
+      removeGanttPreviewOverlay(container)
+      return
+    }
+    if (!chart) return
+
+    const changedIds = new Set(
+      preview.changes
+        .filter((change) => change.kind === 'dates' && change.currentTask)
+        .map((change) => change.publicId),
+    )
+    const authoritativeTasks = latestTasksRef.current.filter(
+      (task) => changedIds.has(task.id),
+    )
+    reconcileGanttTasks(chart, container, authoritativeTasks)
+    schedulePreviewOverlay(container)
+  }, [layoutSignature, preview, previewSignature])
 
   if (plan.tasks.length === 0 && !preview?.proposedPlan.tasks.length) {
     return (

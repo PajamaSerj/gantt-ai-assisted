@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { ganttPreviewTasks, ganttTasks } from './gantt-tasks'
-import { buildPendingPlanPreview } from './pending-preview'
+import { ganttTasks } from './gantt-tasks'
 import { makePlan, makeSergeyPendingScenario } from './test/fixtures'
 
 describe('gantt task presentation', () => {
@@ -29,33 +28,16 @@ describe('gantt task presentation', () => {
     expect(tasks[1].dependencies).toBe('TASK-009')
   })
 
-  it('renders separate current and proposed rows for changed dates', () => {
-    const { current, changeset } = makeSergeyPendingScenario()
-    const preview = buildPendingPlanPreview(current, changeset)
-    expect(preview).not.toBeNull()
+  it('keeps exactly one authoritative row per current task', () => {
+    const { current } = makeSergeyPendingScenario()
 
-    const tasks = ganttPreviewTasks(preview!)
-    const currentTask3 = tasks.find(
-      (task) => task.id === 'preview-current-TASK-003',
+    const tasks = ganttTasks(current, new Set())
+
+    expect(tasks).toHaveLength(7)
+    expect(tasks.map((task) => task.id)).toEqual(
+      current.tasks.map((task) => task.public_id),
     )
-    const proposedTask3 = tasks.find((task) => task.id === 'TASK-003')
-    const unchangedTask2 = tasks.find((task) => task.id === 'TASK-002')
-
-    expect(currentTask3).toMatchObject({
-      name: 'Сейчас: 3 · Основа бэкенда',
-      start: '2026-02-05',
-      end: '2026-02-11',
-      dependencies: '',
-      custom_class: 'gantt-task-preview-current',
-    })
-    expect(proposedTask3).toMatchObject({
-      name: 'После применения: 3 · Основа бэкенда',
-      start: '2026-02-12',
-      end: '2026-02-18',
-      dependencies: 'TASK-001',
-      custom_class: 'gantt-task-preview-proposed',
-    })
-    expect(unchangedTask2?.name).toBe('2 · UX-дизайн')
-    expect(tasks).toHaveLength(11)
+    expect(JSON.stringify(tasks)).not.toContain('preview-current-')
+    expect(JSON.stringify(tasks)).not.toContain('После применения:')
   })
 })

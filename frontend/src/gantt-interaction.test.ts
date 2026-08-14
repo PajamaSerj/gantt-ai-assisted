@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   directEditIntent,
   disableLeftResizeHandles,
-  keepProposedPreviewLabelsVisible,
 } from './gantt-interaction'
 import { makePlan, makeSergeyPendingScenario } from './test/fixtures'
 
@@ -98,29 +97,5 @@ describe('Gantt direct interaction helpers', () => {
     expect(left?.style.opacity).toBe('0')
     expect(left).toHaveAttribute('aria-hidden', 'true')
     expect(right?.style.pointerEvents).toBe('')
-  })
-
-  it('positions an overflowing proposed label before a right-edge bar', () => {
-    const container = document.createElement('div')
-    container.innerHTML = `
-      <svg class="gantt" width="400">
-        <rect class="grid-row" width="400"></rect>
-        <g class="bar-wrapper gantt-task-preview-proposed">
-          <rect class="bar" x="330" width="40"></rect>
-          <text class="bar-label big" x="375">После применения: Подготовка демо</text>
-        </g>
-      </svg>
-    `
-    const label = container.querySelector<SVGTextElement>('.bar-label')
-    if (!label) throw new Error('Expected proposed preview label')
-    Object.defineProperty(label, 'getBBox', {
-      value: () => ({ width: 180 }),
-    })
-
-    keepProposedPreviewLabelsVisible(container)
-
-    expect(label).toHaveAttribute('x', '325')
-    expect(label).toHaveAttribute('text-anchor', 'end')
-    expect(label).toHaveClass('gantt-label-before')
   })
 })

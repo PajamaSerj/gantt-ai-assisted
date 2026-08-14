@@ -46,6 +46,22 @@ class ResizeObserverMock implements ResizeObserver {
 vi.mock('frappe-gantt', () => ({
   default: class MockGantt {
     private container: HTMLElement
+    gantt_start = new Date(2026, 0, 1)
+    config = { unit: 'day', step: 7, column_width: 140 }
+
+    private dateX(value: string): number {
+      const [year, month, day] = value.split('-').map(Number)
+      const date = new Date(year, month - 1, day)
+      const days = Math.round(
+        (date.getTime() - this.gantt_start.getTime()) / 86_400_000,
+      )
+      return days / this.config.step * this.config.column_width
+    }
+
+    private barWidth(start: string, end: string): number {
+      return this.dateX(end) - this.dateX(start) +
+        this.config.column_width / this.config.step
+    }
 
     constructor(
       container: HTMLElement,
@@ -58,12 +74,18 @@ vi.mock('frappe-gantt', () => ({
       ganttMock.constructorCount += 1
       ganttMock.constructorTaskCounts.push(tasks.length)
       container.innerHTML = (
-        '<div class="gantt-container"><svg class="gantt">' +
-        tasks.map((task) => (
+        '<div class="gantt-container"><svg class="gantt" width="1600" height="459">' +
+        '<g class="grid"><rect class="grid-row" width="1600"></rect></g>' +
+        tasks.map((task, index) => (
           `<g class="bar-wrapper" data-id="${task.id}">` +
-          `<rect class="bar" width="100" data-start="${task.start}" data-end="${task.end}">` +
+          '<g class="bar-group">' +
+          `<rect class="bar" x="${this.dateX(task.start)}" ` +
+          `y="${95 + index * 52}" width="${this.barWidth(task.start, task.end)}" ` +
+          `height="32" data-start="${task.start}" data-end="${task.end}">` +
           '<animate attributeName="width" from="0" to="100"></animate>' +
           '</rect>' +
+          `<text class="bar-label big" x="${this.dateX(task.start) + this.barWidth(task.start, task.end) + 5}" ` +
+          `y="${111 + index * 52}">${task.name}</text></g>` +
           '<rect class="handle left"></rect>' +
           '<rect class="handle right"></rect>' +
           '</g>'
@@ -94,6 +116,13 @@ vi.mock('frappe-gantt', () => ({
       if (!bar) return
       if (details.start) bar.dataset.start = details.start
       if (details.end) bar.dataset.end = details.end
+      if (details.start) bar.setAttribute('x', String(this.dateX(details.start)))
+      if (details.start && details.end) {
+        bar.setAttribute(
+          'width',
+          String(this.barWidth(details.start, details.end)),
+        )
+      }
       bar.innerHTML = (
         '<animate attributeName="width" from="0" to="100"></animate>'
       )
@@ -101,6 +130,11 @@ vi.mock('frappe-gantt', () => ({
 
     change_view_mode(mode: string, maintainPosition: boolean): void {
       ganttMock.viewChanges.push({ mode, maintainPosition })
+      if (mode === 'Day') this.config = { unit: 'day', step: 1, column_width: 45 }
+      if (mode === 'Week') this.config = { unit: 'day', step: 7, column_width: 140 }
+      if (mode === 'Month') {
+        this.config = { unit: 'month', step: 1, column_width: 120 }
+      }
     }
   },
 }))
@@ -418,11 +452,94 @@ describe('interactive Gantt integration', () => {
       await new Promise((resolve) => window.setTimeout(resolve, 30))
     })
 
-    expect(ganttMock.constructorTaskCounts).toEqual([7, 11])
+    expect(ganttMock.constructorTaskCounts).toEqual([7, 7])
     expect(ganttMock.constructorTaskCounts).not.toContain(0)
     expect(ganttMock.refreshCount).toBe(0)
-    expect(chart.container.querySelectorAll('.bar-wrapper')).toHaveLength(11)
+    expect(chart.container.querySelectorAll('.bar-wrapper')).toHaveLength(7)
+    expect(ganttMock.tasks.map((task) => task.id)).toEqual(
+      current.tasks.map((task) => task.public_id),
+    )
+    expect(JSON.stringify(ganttMock.tasks)).not.toContain('preview-current-')
+    expect(chart.container.querySelectorAll('.gantt-preview-item')).toHaveLength(4)
+    const task3Overlay = chart.container.querySelector(
+      '.gantt-preview-item[data-task-id="TASK-003"]',
+    )
+    expect(task3Overlay).toHaveAttribute(
+      'data-current-y',
+      task3Overlay?.getAttribute('data-proposed-y'),
+    )
+    expect(task3Overlay).toHaveAttribute('data-source', 'direct')
+    expect(chart.container.querySelector(
+      '.gantt-preview-item[data-task-id="TASK-006"]',
+    )).toHaveAttribute('data-source', 'dependency')
+    expect(chart.container.querySelectorAll(
+      '.gantt-preview-current-label',
+    )).toHaveLength(4)
+    const lastLabel = chart.container.querySelector(
+      '.gantt-preview-item[data-task-id="TASK-007"] .gantt-preview-label',
+    )
+    expect(lastLabel?.getAttribute('transform')).toMatch(/translate\([^ ]+ 415\)/)
     expect(chart.container.querySelector('animate')).not.toBeInTheDocument()
+  })
+
+  it('removes preview overlays on Apply and reconciles proposed dates', async () => {
+    const { current, proposed, changeset } = makeSergeyPendingScenario()
+    const preview = buildPendingPlanPreview(current, changeset)
+    const chart = renderChart({
+      plan: current,
+      preview,
+      interactionDisabled: true,
+    })
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30))
+    })
+    expect(chart.container.querySelector('.gantt-preview-overlay')).not.toBeNull()
+
+    chart.rerender(<GanttChart
+      {...chart.props}
+      plan={proposed}
+      preview={null}
+      interactionDisabled={false}
+    />)
+
+    expect(chart.container.querySelector('.gantt-preview-overlay')).toBeNull()
+    expect(chart.container.querySelector(
+      '.bar-wrapper[data-id="TASK-003"] .bar',
+    )).toHaveAttribute('data-start', '2026-02-12')
+    expect(chart.container.querySelectorAll('.bar-wrapper')).toHaveLength(7)
+  })
+
+  it('removes preview overlays on Cancel without mutating current dates', async () => {
+    const { current, changeset } = makeSergeyPendingScenario()
+    const snapshot = structuredClone(current)
+    const preview = buildPendingPlanPreview(current, changeset)
+    const chart = renderChart({
+      plan: current,
+      preview,
+      interactionDisabled: true,
+    })
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30))
+    })
+    const scroller = chart.container.querySelector<HTMLElement>('.gantt-container')
+    if (scroller) scroller.scrollLeft = 77
+
+    chart.rerender(<GanttChart
+      {...chart.props}
+      plan={current}
+      preview={null}
+      interactionDisabled={false}
+    />)
+
+    expect(current).toEqual(snapshot)
+    expect(chart.container.querySelector('.gantt-preview-overlay')).toBeNull()
+    expect(chart.container.querySelector(
+      '.bar-wrapper[data-id="TASK-003"] .bar',
+    )).toHaveAttribute('data-start', '2026-02-05')
+    expect(chart.container.querySelectorAll('.bar-wrapper')).toHaveLength(7)
+    expect(chart.container.querySelector<HTMLElement>(
+      '.gantt-container',
+    )?.scrollLeft).toBe(77)
   })
 
   it('disables drag and resize whenever a pending ChangeSet exists', () => {
