@@ -1,4 +1,11 @@
-import { useEffect, useRef, type FormEvent, type UIEvent } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type UIEvent,
+} from 'react'
 
 import type { ConversationMessage, PendingChange } from '../types'
 import { AssistantMessage } from './AssistantMessage'
@@ -27,14 +34,24 @@ export function AiDrawer({
   onAttach,
 }: AiDrawerProps) {
   const attachmentRef = useRef<HTMLInputElement>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  const composerSelectionRef = useRef<number | null>(null)
   const conversationRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
+  const composingRef = useRef(false)
 
   useEffect(() => {
     if (!open || !stickToBottomRef.current) return
     const conversation = conversationRef.current
     if (conversation) conversation.scrollTop = conversation.scrollHeight
   }, [busy, messages, open])
+
+  useLayoutEffect(() => {
+    const selection = composerSelectionRef.current
+    if (selection === null) return
+    composerRef.current?.setSelectionRange(selection, selection)
+    composerSelectionRef.current = null
+  }, [message])
 
   function trackConversationScroll(event: UIEvent<HTMLDivElement>) {
     const element = event.currentTarget
@@ -45,6 +62,24 @@ export function AiDrawer({
   async function submit(event: FormEvent) {
     event.preventDefault()
     await onSubmit()
+  }
+
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter') return
+    if (composingRef.current || event.nativeEvent.isComposing) return
+    event.preventDefault()
+    if (event.ctrlKey) {
+      const textarea = event.currentTarget
+      const selectionStart = textarea.selectionStart
+      const selectionEnd = textarea.selectionEnd
+      composerSelectionRef.current = selectionStart + 1
+      onMessageChange(
+        `${message.slice(0, selectionStart)}\n${message.slice(selectionEnd)}`,
+      )
+      return
+    }
+    if (busy || pending || !message.trim()) return
+    void onSubmit()
   }
 
   return (
@@ -105,10 +140,18 @@ export function AiDrawer({
 
       <form className="composer" onSubmit={(event) => void submit(event)}>
         <textarea
+          ref={composerRef}
           aria-label="Сообщение AI-помощнику"
           placeholder="Что хотите сделать с задачами?"
           value={message}
           onChange={(event) => onMessageChange(event.target.value)}
+          onCompositionStart={() => {
+            composingRef.current = true
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false
+          }}
+          onKeyDown={handleComposerKeyDown}
           disabled={busy || Boolean(pending)}
           rows={3}
         />

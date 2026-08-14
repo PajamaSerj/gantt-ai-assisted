@@ -1,14 +1,53 @@
+import { compactTaskReference } from '../gantt-tasks'
+import {
+  formatPreviewDateRange,
+  pendingPreviewSummary,
+  type PendingPlanPreview,
+  type PendingTaskPreview,
+} from '../pending-preview'
 import { formatPlanDate } from '../plan-view'
 import type { PendingChange } from '../types'
 
 type PendingPanelProps = {
   pending: PendingChange
+  preview: PendingPlanPreview | null
   busy: boolean
   onApply: () => void
   onCancel: () => void
 }
 
-export function PendingPanel({ pending, busy, onApply, onCancel }: PendingPanelProps) {
+function taskDates(task: PendingTaskPreview['currentTask']): string | null {
+  return task
+    ? formatPreviewDateRange(task.start_date, task.end_date)
+    : null
+}
+
+function changeDates(change: PendingTaskPreview): string {
+  const current = taskDates(change.currentTask)
+  const proposed = taskDates(change.proposedTask)
+  if (change.kind === 'added') return `Появится в плане: ${proposed}`
+  if (change.kind === 'removed') return `Будет удалена из плана (сейчас: ${current})`
+  if (change.kind === 'details') return `Сроки без изменений: ${proposed}`
+  return `${current} → ${proposed}`
+}
+
+function changeReason(change: PendingTaskPreview): string {
+  if (change.source === 'dependency') {
+    return change.dependencyName
+      ? `Сдвинется из-за зависимости от «${change.dependencyName}»`
+      : 'Сдвинется из-за зависимости'
+  }
+  if (change.source === 'direct') return 'Запрошенное изменение'
+  return 'Связанное изменение'
+}
+
+export function PendingPanel({
+  pending,
+  preview,
+  busy,
+  onApply,
+  onCancel,
+}: PendingPanelProps) {
   const changeset = pending.changeset
   const canApply = pending.availableOptions.includes('apply_all')
   const canCancel = pending.availableOptions.includes('cancel')
@@ -20,20 +59,25 @@ export function PendingPanel({ pending, busy, onApply, onCancel }: PendingPanelP
           <p className="eyebrow">Требуется решение</p>
           <h2 id="pending-title">Изменения ещё не применены</h2>
         </div>
-        <span className="pending-count">{changeset.affected_tasks.length} задач</span>
+        <span className="pending-count">
+          {preview?.changes.length ?? changeset.affected_tasks.length} задач
+        </span>
       </div>
-      <p>{pending.message}</p>
+      <p>{preview
+        ? pendingPreviewSummary(preview)
+        : 'Изменения подготовлены к подтверждению.'}</p>
 
-      {changeset.proposed_impacts.length > 0 && (
-        <div className="impact-list">
-          {changeset.proposed_impacts.map((impact) => (
-            <article key={`${impact.public_id}-${impact.proposed_start_date}`}>
-              <strong>{impact.public_id} · {impact.task_name}</strong>
-              <span>
-                {formatPlanDate(impact.current_start_date)} →{' '}
-                {formatPlanDate(impact.proposed_start_date)}
-              </span>
-              <small>{impact.reason}</small>
+      {preview && preview.changes.length > 0 && (
+        <div className="pending-change-list">
+          {preview.changes.map((change) => (
+            <article key={change.internalId}>
+              <strong>
+                {compactTaskReference(change.publicId)} · {change.name}
+              </strong>
+              <span>{changeDates(change)}</span>
+              <small className={`change-source ${change.source}`}>
+                {changeReason(change)}
+              </small>
             </article>
           ))}
         </div>
@@ -46,9 +90,22 @@ export function PendingPanel({ pending, busy, onApply, onCancel }: PendingPanelP
         </p>
       ))}
 
-      {changeset.confirmation_reasons.map((reason) => (
-        <p className="normalization" key={reason.code}>{reason.message}</p>
-      ))}
+      {changeset.confirmation_reasons.map((reason, index) => {
+        const assignees = reason.code === 'NEW_ASSIGNEE'
+          ? [...new Set(
+              preview?.proposedPlan.tasks
+                .filter((task) => reason.task_public_ids.includes(task.public_id))
+                .map((task) => task.assignee)
+                .filter((assignee): assignee is string => Boolean(assignee)),
+            )]
+          : []
+        const message = assignees.length > 0
+          ? `Новый исполнитель ${assignees.map((name) => `«${name}»`).join(', ')} будет добавлен после подтверждения.`
+          : 'Изменение требует дополнительного подтверждения.'
+        return (
+          <p className="normalization" key={`${reason.code}-${index}`}>{message}</p>
+        )
+      })}
 
       <div className="pending-actions">
         {canCancel && (

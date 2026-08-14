@@ -102,11 +102,31 @@ def _conflict_message(changeset: ChangeSet) -> str:
 
 
 def _confirmation_message(changeset: ChangeSet) -> str:
-    details = [reason.message for reason in changeset.confirmation_reasons]
+    details: list[str] = []
+    proposed_by_public_id = {
+        task.public_id: task
+        for task in (changeset.proposed_plan.tasks if changeset.proposed_plan else ())
+    }
+    for reason in changeset.confirmation_reasons:
+        assignees = {
+            proposed_by_public_id[public_id].assignee
+            for public_id in reason.task_public_ids
+            if public_id in proposed_by_public_id
+            and proposed_by_public_id[public_id].assignee is not None
+        }
+        if reason.code == "NEW_ASSIGNEE" and assignees:
+            details.append(
+                "Новый исполнитель "
+                + ", ".join(f"«{assignee}»" for assignee in sorted(assignees))
+                + " будет добавлен после подтверждения."
+            )
+        else:
+            details.append("Изменение требует дополнительного подтверждения.")
     details.extend(
-        f"{impact.public_id} будет перенесена с "
+        f"{impact.public_id} «{impact.task_name}» будет перенесена с "
         f"{impact.current_start_date.isoformat()} на "
-        f"{impact.proposed_start_date.isoformat()}: {impact.reason}."
+        f"{impact.proposed_start_date.isoformat()}, поскольку зависит от "
+        f"{impact.dependency_public_id} «{impact.dependency_name}»."
         for impact in changeset.proposed_impacts
     )
     details.extend(

@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 
-import { compactTaskReference } from '../gantt-tasks'
 import { buildTaskDetails, formatPlanDate } from '../plan-view'
 import type { PlanState, Task } from '../types'
 
@@ -19,9 +18,7 @@ function RelationList({
   return (
     <ul className="relation-list">
       {items.map((item) => (
-        <li key={item.publicId}>
-          <span>{compactTaskReference(item.publicId)}</span> · {item.name}
-        </li>
+        <li key={item.publicId}>{item.name}</li>
       ))}
     </ul>
   )

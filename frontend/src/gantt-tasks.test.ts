@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { ganttTasks } from './gantt-tasks'
-import { makePlan } from './test/fixtures'
+import { ganttPreviewTasks, ganttTasks } from './gantt-tasks'
+import { buildPendingPlanPreview } from './pending-preview'
+import { makePlan, makeSergeyPendingScenario } from './test/fixtures'
 
 describe('gantt task presentation', () => {
   it('shows compact public-ID numbers with task names and maps dependencies', () => {
@@ -26,5 +27,35 @@ describe('gantt task presentation', () => {
       '7 · UX-дизайн',
     ])
     expect(tasks[1].dependencies).toBe('TASK-009')
+  })
+
+  it('renders separate current and proposed rows for changed dates', () => {
+    const { current, changeset } = makeSergeyPendingScenario()
+    const preview = buildPendingPlanPreview(current, changeset)
+    expect(preview).not.toBeNull()
+
+    const tasks = ganttPreviewTasks(preview!)
+    const currentTask3 = tasks.find(
+      (task) => task.id === 'preview-current-TASK-003',
+    )
+    const proposedTask3 = tasks.find((task) => task.id === 'TASK-003')
+    const unchangedTask2 = tasks.find((task) => task.id === 'TASK-002')
+
+    expect(currentTask3).toMatchObject({
+      name: 'Сейчас: 3 · Backend foundation',
+      start: '2026-02-05',
+      end: '2026-02-11',
+      dependencies: '',
+      custom_class: 'gantt-task-preview-current',
+    })
+    expect(proposedTask3).toMatchObject({
+      name: 'После применения: 3 · Backend foundation',
+      start: '2026-02-12',
+      end: '2026-02-18',
+      dependencies: 'TASK-001',
+      custom_class: 'gantt-task-preview-proposed',
+    })
+    expect(unchangedTask2?.name).toBe('2 · UX design')
+    expect(tasks).toHaveLength(11)
   })
 })

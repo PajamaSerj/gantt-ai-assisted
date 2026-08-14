@@ -397,14 +397,14 @@
   border-radius: 999px;
 }
 
-.impact-list {
+.pending-change-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 7px;
   margin: 12px 0;
 }
 
-.impact-list article {
+.pending-change-list article {
   display: grid;
   gap: 3px;
   padding: 10px 11px;
@@ -413,15 +413,37 @@
   border-radius: 9px;
 }
 
-.impact-list strong {
+.pending-change-list strong {
   font-size: 11px;
 }
 
-.impact-list span,
-.impact-list small,
+.pending-change-list span,
+.pending-change-list small,
 .normalization {
   color: var(--muted);
   font-size: 10px;
+}
+
+.change-source {
+  width: fit-content;
+  padding: 3px 6px;
+  font-weight: 680;
+  border-radius: 999px;
+}
+
+.change-source.direct {
+  color: #7b4a08;
+  background: #fff3d6;
+}
+
+.change-source.dependency {
+  color: #9f3a38;
+  background: #fff0ed;
+}
+
+.change-source.related {
+  color: #526178;
+  background: #eef2f7;
 }
 
 .normalization {
@@ -474,6 +496,15 @@
 
 .legend-dot.affected {
   background: var(--danger);
+}
+
+.legend-dot.current {
+  background: transparent;
+  border: 1px dashed #7c8799;
+}
+
+.legend-dot.proposed {
+  background: #d9822b;
 }
 
 .view-control {
@@ -588,6 +619,31 @@
 
 .gantt-host .gantt .gantt-task-affected .bar {
   filter: drop-shadow(0 0 4px rgba(219, 117, 95, 0.35));
+}
+
+.gantt-host .gantt .gantt-task-preview-current .bar {
+  fill: rgba(124, 135, 153, 0.08);
+  stroke: #7c8799;
+  stroke-width: 1.5px;
+  stroke-dasharray: 5 3;
+}
+
+.gantt-host .gantt .gantt-task-preview-current .bar-progress {
+  fill: transparent;
+}
+
+.gantt-host .gantt .gantt-task-preview-current .bar-label {
+  fill: #566176;
+  font-style: italic;
+}
+
+.gantt-host .gantt .gantt-task-preview-proposed .bar,
+.gantt-host .gantt .gantt-task-preview-proposed .bar-progress {
+  fill: #d9822b;
+}
+
+.gantt-host .gantt .gantt-task-preview-proposed .bar {
+  filter: drop-shadow(0 2px 3px rgba(176, 91, 14, 0.24));
 }
 
 .gantt-host .upper-text,
@@ -1011,11 +1067,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.relation-list span {
-  color: var(--accent-strong);
-  font: 760 9px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
 .modal-footer {

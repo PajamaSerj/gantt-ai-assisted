@@ -143,6 +143,46 @@ def test_mass_move_is_one_auto_applicable_batch() -> None:
     assert source.tasks[2].start_date.isoformat() == "2026-02-05"
 
 
+def test_sergey_week_move_prepares_expected_four_task_preview() -> None:
+    source = get_seed_plan()
+    provider = ScriptedProvider(
+        tool_turn(
+            "move-sergey",
+            "move_tasks",
+            {"identifiers": ["TASK-003", "TASK-005"], "shift_workdays": 5},
+        ),
+        final_turn(),
+    )
+
+    response = run_chat(
+        provider,
+        "Сдвинь задачи Сергея на неделю вперёд",
+        plan=source,
+    )
+
+    assert response.status == "confirmation_required"
+    assert response.plan == source
+    assert response.pending_changeset is not None
+    proposed = {
+        task.public_id: task.start_date.isoformat()
+        for task in response.pending_changeset.proposed_plan.tasks
+    }
+    assert {task_id: proposed[task_id] for task_id in (
+        "TASK-003", "TASK-005", "TASK-006", "TASK-007"
+    )} == {
+        "TASK-003": "2026-02-12",
+        "TASK-005": "2026-02-25",
+        "TASK-006": "2026-03-02",
+        "TASK-007": "2026-03-06",
+    }
+    assert [
+        impact.public_id
+        for impact in response.pending_changeset.proposed_impacts
+    ] == ["TASK-006", "TASK-007"]
+    assert "must start after" not in response.message
+    assert "поскольку зависит от" in response.message
+
+
 def test_move_success_message_uses_deterministic_workday_and_dates() -> None:
     source = get_seed_plan()
 

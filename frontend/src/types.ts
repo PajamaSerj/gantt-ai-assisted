@@ -62,10 +62,30 @@ export type ConfirmationReason = {
   task_public_ids: string[]
 }
 
+export type TaskSpec = Omit<Task, 'start_date' | 'end_date'>
+
+export type RequestedChange =
+  | {
+      type: 'replace_plan'
+      tasks: TaskSpec[]
+      plan_start_date: string
+    }
+  | {
+      type: 'append_plan'
+      tasks: TaskSpec[]
+      minimum_start_date: string
+    }
+  | { type: 'rename_task'; task_id: string; name: string }
+  | { type: 'set_description'; task_id: string; description: string | null }
+  | { type: 'set_duration'; task_id: string; duration_workdays: number }
+  | { type: 'move_task'; task_id: string; start_date: string }
+  | { type: 'set_assignee'; task_id: string; assignee: string | null }
+  | { type: 'set_predecessors'; task_id: string; predecessor_ids: string[] }
+
 export type ChangeSet = {
   changeset_id: string
   source_plan_digest: string
-  requested_changes: unknown[]
+  requested_changes: RequestedChange[]
   affected_tasks: AffectedTask[]
   conflicts: ChangeConflict[]
   proposed_impacts: ProposedImpact[]

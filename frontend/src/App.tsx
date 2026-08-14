@@ -14,6 +14,7 @@ import { GanttChart } from './components/GanttChart'
 import { ImportDialog } from './components/ImportDialog'
 import { PendingPanel } from './components/PendingPanel'
 import { TaskModal } from './components/TaskModal'
+import { buildPendingPlanPreview } from './pending-preview'
 import { loadPlannerState, persistPlannerState } from './storage'
 import type {
   ChatResponse,
@@ -105,6 +106,14 @@ function App() {
     )
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  const pendingPreview = useMemo(() => {
+    if (!planner.plan || !planner.pendingChange) return null
+    return buildPendingPlanPreview(
+      planner.plan,
+      planner.pendingChange.changeset,
+    )
+  }, [planner.pendingChange, planner.plan])
 
   const affectedPublicIds = useMemo(() => {
     const pending = planner.pendingChange?.changeset
@@ -461,6 +470,7 @@ function App() {
           {planner.pendingChange && (
             <PendingPanel
               pending={planner.pendingChange}
+              preview={pendingPreview}
               busy={applyBusy}
               onApply={() => void applyPending()}
               onCancel={cancelPending}
@@ -470,8 +480,14 @@ function App() {
           <section className="gantt-card" aria-label="Диаграмма Гантта">
             <div className="gantt-card-header">
               <div className="legend">
-                <span><i className="legend-dot active" />Задачи</span>
-                {planner.pendingChange && <span><i className="legend-dot affected" />Затронуты</span>}
+                {pendingPreview ? (
+                  <>
+                    <span><i className="legend-dot current" />Текущие даты</span>
+                    <span><i className="legend-dot proposed" />После применения</span>
+                  </>
+                ) : (
+                  <span><i className="legend-dot active" />Задачи</span>
+                )}
               </div>
               <label className="view-control">
                 Масштаб
@@ -490,6 +506,7 @@ function App() {
               {plan && (
                 <GanttChart
                   plan={plan}
+                  preview={pendingPreview}
                   affectedPublicIds={affectedPublicIds}
                   viewMode={viewMode}
                   scrollToStartToken={scrollToStartToken}

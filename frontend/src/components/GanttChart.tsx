@@ -2,13 +2,19 @@ import { useEffect, useRef } from 'react'
 import Gantt from 'frappe-gantt'
 
 import { GANTT_SAFETY_OPTIONS } from '../gantt-config'
-import { ganttTasks } from '../gantt-tasks'
+import {
+  currentPreviewTaskId,
+  ganttPreviewTasks,
+  ganttTasks,
+} from '../gantt-tasks'
+import type { PendingPlanPreview } from '../pending-preview'
 import type { PlanState, Task } from '../types'
 
 type ViewMode = 'Day' | 'Week' | 'Month'
 
 type GanttChartProps = {
   plan: PlanState
+  preview: PendingPlanPreview | null
   affectedPublicIds: Set<string>
   viewMode: ViewMode
   scrollToStartToken: number
@@ -35,6 +41,7 @@ function highlightAffectedArrows(
 
 export function GanttChart({
   plan,
+  preview,
   affectedPublicIds,
   viewMode,
   scrollToStartToken,
@@ -48,21 +55,29 @@ export function GanttChart({
 
   useEffect(() => {
     const container = containerRef.current
-    if (!container || plan.tasks.length === 0) return
-    const tasks = ganttTasks(plan, affectedPublicIds)
-    const byPublicId = new Map(plan.tasks.map((task) => [task.public_id, task]))
+    if (!container) return
+    const tasks = preview
+      ? ganttPreviewTasks(preview)
+      : ganttTasks(plan, affectedPublicIds)
+    if (tasks.length === 0) return
+    const byGanttId = new Map<string, Task>()
+    plan.tasks.forEach((task) => {
+      byGanttId.set(task.public_id, task)
+      byGanttId.set(currentPreviewTaskId(task.public_id), task)
+    })
     const forcePlanStart = scrollTokenRef.current !== scrollToStartToken
     chartRef.current = new Gantt(container, tasks, {
       ...GANTT_SAFETY_OPTIONS,
       view_mode: viewModeRef.current,
-      scroll_to: plan.tasks[0]?.start_date || 'start',
+      scroll_to: plan.tasks[0]?.start_date ||
+        preview?.proposedPlan.tasks[0]?.start_date || 'start',
       today_button: false,
       popup: false,
       container_height: 'auto',
       bar_height: 32,
       padding: 20,
       on_click: (selected) => {
-        const task = byPublicId.get(selected.id)
+        const task = byGanttId.get(selected.id)
         if (task) onTaskSelect(task)
       },
     })
@@ -79,7 +94,7 @@ export function GanttChart({
       chartRef.current = null
       container.replaceChildren()
     }
-  }, [affectedPublicIds, onTaskSelect, plan, scrollToStartToken])
+  }, [affectedPublicIds, onTaskSelect, plan, preview, scrollToStartToken])
 
   useEffect(() => {
     if (viewModeRef.current === viewMode) return
@@ -89,7 +104,7 @@ export function GanttChart({
     if (container) highlightAffectedArrows(container, affectedPublicIds)
   }, [affectedPublicIds, viewMode])
 
-  if (plan.tasks.length === 0) {
+  if (plan.tasks.length === 0 && !preview?.proposedPlan.tasks.length) {
     return (
       <div className="empty-state">
         <strong>В плане пока нет задач</strong>

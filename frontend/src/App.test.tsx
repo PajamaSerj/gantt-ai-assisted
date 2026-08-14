@@ -1,14 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import App from './App'
 import { persistPlannerState, STORAGE_KEY } from './storage'
-import { jsonResponse, makeChangeSet, makePlan } from './test/fixtures'
+import {
+  jsonResponse,
+  makeChangeSet,
+  makePlan,
+  makeSergeyPendingScenario,
+} from './test/fixtures'
 
 vi.mock('./components/GanttChart', () => ({
-  GanttChart: ({ plan, onTaskSelect }: { plan: ReturnType<typeof makePlan>; onTaskSelect: (task: ReturnType<typeof makePlan>['tasks'][number]) => void }) => (
-    <div data-testid="gantt-chart">
+  GanttChart: ({ plan, preview, onTaskSelect }: {
+    plan: ReturnType<typeof makePlan>
+    preview: { proposedPlan: ReturnType<typeof makePlan>; changes: unknown[] } | null
+    onTaskSelect: (task: ReturnType<typeof makePlan>['tasks'][number]) => void
+  }) => (
+    <div
+      data-active-task-3-start={plan.tasks.find((task) => task.public_id === 'TASK-003')?.start_date}
+      data-preview-count={preview?.changes.length}
+      data-preview-task-3-start={preview?.proposedPlan.tasks.find((task) => task.public_id === 'TASK-003')?.start_date}
+      data-testid="gantt-chart"
+    >
       {plan.tasks.map((task) => (
         <button key={task.public_id} onClick={() => onTaskSelect(task)}>
           {task.public_id} {task.name}
@@ -163,9 +177,17 @@ describe('Iteration 04 integration state', () => {
     )
     render(<App />)
 
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-preview-count',
+      '1',
+    )
+
     await user.click(screen.getByRole('button', { name: 'Применить всё' }))
 
     expect(await screen.findByText(/TASK-001 Перенесённая задача/)).toBeInTheDocument()
+    expect(screen.getByTestId('gantt-chart')).not.toHaveAttribute(
+      'data-preview-count',
+    )
     expect(fetchMock.mock.calls[0][0]).toBe('/api/changesets/apply')
     expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).choice).toBe('apply_all')
   })
@@ -209,9 +231,10 @@ describe('Iteration 04 integration state', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveTextContent('TASK-002')
     expect(dialog).toHaveTextContent('Зависит от')
-    expect(dialog).toHaveTextContent('1 · Исследование продукта')
+    expect(dialog).toHaveTextContent('Исследование продукта')
     expect(dialog).toHaveTextContent('Влияет на')
     expect(dialog).not.toHaveTextContent('TASK-001')
+    expect(dialog).not.toHaveTextContent('1 · Исследование продукта')
     expect(dialog).toHaveTextContent('Только просмотр')
     expect(dialog).not.toHaveTextContent('00000000-0000-4000')
   })
@@ -422,5 +445,146 @@ describe('Iteration 04 integration state', () => {
     })
 
     expect(screen.queryByText('Демо-план восстановлен.')).not.toBeInTheDocument()
+  })
+
+  it('submits chat with Enter', async () => {
+    const user = userEvent.setup()
+    stored()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'clarification_required',
+        message: 'Уточните действие.',
+        plan: makePlan(),
+        conversation_context: [
+          { role: 'user', content: 'Помощь' },
+          { role: 'assistant', content: 'Уточните действие.' },
+        ],
+        pending_changeset: null,
+        available_options: [],
+      }),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    const composer = screen.getByLabelText('Сообщение AI-помощнику')
+    await user.type(composer, 'Помощь{Enter}')
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).message).toBe(
+      'Помощь',
+    )
+    expect(composer).toHaveValue('')
+  })
+
+  it('inserts a newline with Ctrl+Enter without submitting', async () => {
+    const user = userEvent.setup()
+    stored()
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    const composer = screen.getByLabelText('Сообщение AI-помощнику')
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    await user.type(
+      composer,
+      'Первая строка{Control>}{Enter}{/Control}Вторая строка',
+    )
+
+    expect(composer).toHaveValue('Первая строка\nВторая строка')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not submit Enter while IME composition is active', async () => {
+    const user = userEvent.setup()
+    stored()
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    const composer = screen.getByLabelText('Сообщение AI-помощнику')
+    await user.type(composer, '入力中')
+    fireEvent.compositionStart(composer)
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', isComposing: true })
+    fireEvent.compositionEnd(composer)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(composer).toHaveValue('入力中')
+  })
+
+  it('previews all pending positions without mutating the active plan and cancels cleanly', async () => {
+    const user = userEvent.setup()
+    const { current, changeset } = makeSergeyPendingScenario()
+    persistPlannerState(localStorage, {
+      plan: current,
+      conversationContext: [],
+      pendingChange: {
+        changeset,
+        message: 'TASK-006 must start after TASK-005 finishes',
+        availableOptions: ['apply_all', 'cancel'],
+        source: 'chat',
+      },
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    render(<App />)
+
+    const chart = screen.getByTestId('gantt-chart')
+    expect(chart).toHaveAttribute('data-active-task-3-start', '2026-02-05')
+    expect(chart).toHaveAttribute('data-preview-task-3-start', '2026-02-12')
+    expect(chart).toHaveAttribute('data-preview-count', '4')
+    expect(screen.getByText(
+      'Вы переносите 2 задачи на 5 рабочих дней вперёд. ' +
+      'Из-за зависимостей сдвинутся ещё 2 задачи.',
+    )).toBeInTheDocument()
+    expect(screen.getByText('5–11 февр. → 12–18 февр.')).toBeInTheDocument()
+    expect(screen.getByText('3 · Backend foundation')).toBeInTheDocument()
+    expect(screen.getByText('5 · Application integration')).toBeInTheDocument()
+    expect(screen.getByText('6 · End-to-end QA')).toBeInTheDocument()
+    expect(screen.getByText('7 · Demo readiness')).toBeInTheDocument()
+    expect(screen.getByText('Сдвинется из-за зависимости от «Application integration»')).toBeInTheDocument()
+    expect(screen.queryByText(/must start after/)).not.toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('00000000-0000-4000')
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}').state.plan.tasks[2].start_date).toBe('2026-02-05')
+
+    await user.click(screen.getByRole('button', { name: 'Отменить' }))
+
+    expect(chart).toHaveAttribute('data-active-task-3-start', '2026-02-05')
+    expect(chart).not.toHaveAttribute('data-preview-task-3-start')
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('restores a persisted pending preview after reload without applying it', () => {
+    const { current, changeset } = makeSergeyPendingScenario()
+    persistPlannerState(localStorage, {
+      plan: current,
+      conversationContext: [],
+      pendingChange: {
+        changeset,
+        message: 'Подтвердите перенос',
+        availableOptions: ['apply_all', 'cancel'],
+        source: 'chat',
+      },
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const first = render(<App />)
+
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-preview-task-3-start',
+      '2026-02-12',
+    )
+    first.unmount()
+    render(<App />)
+
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-active-task-3-start',
+      '2026-02-05',
+    )
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-preview-task-3-start',
+      '2026-02-12',
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
