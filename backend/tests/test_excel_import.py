@@ -266,7 +266,7 @@ def test_append_resolves_existing_task_and_continues_public_ids() -> None:
     preparation = prepare_import(
         file_name="append.xlsx",
         content=workbook_bytes(
-            [("Retrospective", None, "Anna", 1, "Demo readiness")]
+            [("Retrospective", None, "Anna", 1, "Подготовка демо")]
         ),
         mode=ImportMode.APPEND,
         date_constraint=date(2026, 3, 2),

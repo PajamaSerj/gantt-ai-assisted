@@ -9,6 +9,21 @@ export type TimelineBounds = {
   end: string
 }
 
+export type TimelineSizing = {
+  columnCount: number
+  columnWidth: number
+  timelineWidth: number
+  scrollable: boolean
+}
+
+const MIN_COLUMN_WIDTH: Record<GanttViewName, number> = {
+  Day: 45,
+  Week: 140,
+  Month: 120,
+}
+
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
+
 const MONTHS_SHORT = [
   'янв.',
   'февр.',
@@ -119,6 +134,67 @@ export function isWeekendDate(value: Date): boolean {
   return value.getDay() === 0 || value.getDay() === 6
 }
 
+function calendarDaysInclusive(start: string, end: string): number {
+  const startDate = parseIsoDate(start)
+  const endDate = parseIsoDate(end)
+  const startUtc = Date.UTC(
+    startDate.getFullYear(),
+    startDate.getMonth(),
+    startDate.getDate(),
+  )
+  const endUtc = Date.UTC(
+    endDate.getFullYear(),
+    endDate.getMonth(),
+    endDate.getDate(),
+  )
+  return Math.round((endUtc - startUtc) / MILLISECONDS_PER_DAY) + 1
+}
+
+function timelineColumnCount(
+  plan: PlanState,
+  viewMode: GanttViewName,
+): number {
+  const bounds = projectTimelineBounds(plan, viewMode)
+  if (!bounds) return 1
+  if (viewMode === 'Day') {
+    return calendarDaysInclusive(bounds.start, bounds.end)
+  }
+  if (viewMode === 'Week') {
+    return Math.max(1, Math.ceil(
+      calendarDaysInclusive(bounds.start, bounds.end) / 7,
+    ))
+  }
+  const start = parseIsoDate(bounds.start)
+  const end = parseIsoDate(bounds.end)
+  return (
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    end.getMonth() - start.getMonth() + 1
+  )
+}
+
+export function timelineSizing(
+  plan: PlanState,
+  viewMode: GanttViewName,
+  viewportWidth: number,
+): TimelineSizing {
+  const columnCount = timelineColumnCount(plan, viewMode)
+  const minimumWidth = MIN_COLUMN_WIDTH[viewMode]
+  const availableWidth = Number.isFinite(viewportWidth)
+    ? Math.max(0, Math.floor(viewportWidth))
+    : 0
+  const minimumTimelineWidth = columnCount * minimumWidth
+  const columnWidth = Math.max(
+    minimumWidth,
+    availableWidth > 0 ? Math.ceil(availableWidth / columnCount) : 0,
+  )
+  return {
+    columnCount,
+    columnWidth,
+    timelineWidth: columnCount * columnWidth,
+    scrollable: availableWidth > 0 && minimumTimelineWidth > availableWidth,
+  }
+}
+
 function monthHeading(value: Date, previous: Date | null): string {
   if (previous && previous.getMonth() === value.getMonth()) return ''
   return `${MONTHS_LONG[value.getMonth()]} ${value.getFullYear()}`
@@ -134,13 +210,17 @@ function weekPadding(plan: PlanState): [string, string] {
   return [`${7 + daysSinceMonday}d`, `${6 - endDaysSinceMonday}d`]
 }
 
-export function ganttViewModes(plan: PlanState): GanttViewMode[] {
+export function ganttViewModes(
+  plan: PlanState,
+  viewportWidth = 0,
+): GanttViewMode[] {
   return [
     {
       name: 'Day',
       padding: ['3d', '2d'],
       step: '1d',
       date_format: 'YYYY-MM-DD',
+      column_width: timelineSizing(plan, 'Day', viewportWidth).columnWidth,
       lower_text: (date) => String(date.getDate()),
       upper_text: (date, previous) => monthHeading(date, previous),
       thick_line: (date) => date.getDay() === 1,
@@ -150,7 +230,7 @@ export function ganttViewModes(plan: PlanState): GanttViewMode[] {
       padding: weekPadding(plan),
       step: '7d',
       date_format: 'YYYY-MM-DD',
-      column_width: 140,
+      column_width: timelineSizing(plan, 'Week', viewportWidth).columnWidth,
       lower_text: (date) => formatCalendarWeek(date),
       upper_text: (date, previous) => monthHeading(date, previous),
       thick_line: (date) => date.getDate() <= 7,
@@ -161,7 +241,7 @@ export function ganttViewModes(plan: PlanState): GanttViewMode[] {
       padding: ['1m', '1m'],
       step: '1m',
       date_format: 'YYYY-MM',
-      column_width: 120,
+      column_width: timelineSizing(plan, 'Month', viewportWidth).columnWidth,
       lower_text: (date) => MONTHS_SHORT[date.getMonth()],
       upper_text: (date, previous) =>
         !previous || previous.getFullYear() !== date.getFullYear()

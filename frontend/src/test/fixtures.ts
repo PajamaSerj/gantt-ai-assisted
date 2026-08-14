@@ -3,6 +3,7 @@ import type { ChangeSet, PlanState, Task } from '../types'
 function seedTask(
   number: number,
   name: string,
+  description: string,
   assignee: string,
   duration_workdays: number,
   predecessorNumbers: number[],
@@ -13,7 +14,7 @@ function seedTask(
     internal_id: `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`,
     public_id: `TASK-${String(number).padStart(3, '0')}`,
     name,
-    description: `${name} description`,
+    description,
     assignee,
     duration_workdays,
     predecessor_ids: predecessorNumbers.map(
@@ -84,13 +85,13 @@ export function makeSergeyPendingScenario(): {
 } {
   const current: PlanState = {
     tasks: [
-      seedTask(1, 'Product discovery', 'Anna', 3, [], '2026-02-02', '2026-02-04'),
-      seedTask(2, 'UX design', 'Maria', 4, [1], '2026-02-05', '2026-02-10'),
-      seedTask(3, 'Backend foundation', 'Sergey', 5, [1], '2026-02-05', '2026-02-11'),
-      seedTask(4, 'Frontend foundation', 'Elena', 5, [2], '2026-02-11', '2026-02-17'),
-      seedTask(5, 'Application integration', 'Sergey', 3, [3, 4], '2026-02-18', '2026-02-20'),
-      seedTask(6, 'End-to-end QA', 'Oleg', 4, [5], '2026-02-23', '2026-02-26'),
-      seedTask(7, 'Demo readiness', 'Anna', 2, [6], '2026-02-27', '2026-03-02'),
+      seedTask(1, 'Исследование продукта', 'Уточнить сценарий демонстрации и критерии приёмки.', 'Анна', 3, [], '2026-02-02', '2026-02-04'),
+      seedTask(2, 'UX-дизайн', 'Подготовить основной пользовательский сценарий планирования.', 'Мария', 4, [1], '2026-02-05', '2026-02-10'),
+      seedTask(3, 'Основа бэкенда', 'Реализовать базовую архитектуру API планировщика.', 'Сергей', 5, [1], '2026-02-05', '2026-02-11'),
+      seedTask(4, 'Основа фронтенда', 'Собрать базовый интерфейс веб-приложения.', 'Елена', 5, [2], '2026-02-11', '2026-02-17'),
+      seedTask(5, 'Интеграция приложения', 'Связать frontend и backend в единый пользовательский сценарий.', 'Сергей', 3, [3, 4], '2026-02-18', '2026-02-20'),
+      seedTask(6, 'Сквозное тестирование', 'Проверить полный пользовательский сценарий приложения.', 'Олег', 4, [5], '2026-02-23', '2026-02-26'),
+      seedTask(7, 'Подготовка демо', 'Подготовить финальную демонстрацию решения.', 'Анна', 2, [6], '2026-02-27', '2026-03-02'),
     ],
   }
   const proposed: PlanState = {

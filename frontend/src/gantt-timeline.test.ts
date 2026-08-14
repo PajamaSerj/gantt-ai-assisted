@@ -5,6 +5,7 @@ import {
   ganttViewModes,
   isWeekendDate,
   projectTimelineBounds,
+  timelineSizing,
 } from './gantt-timeline'
 import { makeSergeyPendingScenario } from './test/fixtures'
 
@@ -46,5 +47,35 @@ describe('Gantt timeline presentation', () => {
     expect(isWeekendDate(new Date(2026, 1, 7, 12))).toBe(true)
     expect(isWeekendDate(new Date(2026, 1, 8, 12))).toBe(true)
     expect(isWeekendDate(new Date(2026, 1, 9, 12))).toBe(false)
+  })
+
+  it('fills a wide viewport for a short bounded plan with uniform columns', () => {
+    const { current } = makeSergeyPendingScenario()
+
+    expect(timelineSizing(current, 'Week', 1600)).toEqual({
+      columnCount: 7,
+      columnWidth: 229,
+      timelineWidth: 1603,
+      scrollable: false,
+    })
+    const modes = ganttViewModes(current, 1600)
+    expect(modes.find((mode) => mode.name === 'Day')?.column_width).toBe(46)
+    expect(modes.find((mode) => mode.name === 'Week')?.column_width).toBe(229)
+    expect(modes.find((mode) => mode.name === 'Month')?.column_width).toBe(400)
+  })
+
+  it('keeps readable minimum columns and scrolling for a long plan', () => {
+    const { current } = makeSergeyPendingScenario()
+    const longPlan = {
+      tasks: current.tasks.map((task, index) => index === current.tasks.length - 1
+        ? { ...task, end_date: '2027-03-02' }
+        : task),
+    }
+
+    const sizing = timelineSizing(longPlan, 'Week', 1200)
+
+    expect(sizing.columnWidth).toBe(140)
+    expect(sizing.timelineWidth).toBeGreaterThan(1200)
+    expect(sizing.scrollable).toBe(true)
   })
 })

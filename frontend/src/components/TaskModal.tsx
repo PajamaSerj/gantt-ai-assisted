@@ -18,7 +18,7 @@ function RelationList({
   return (
     <ul className="relation-list">
       {items.map((item) => (
-        <li key={item.publicId}>{item.name}</li>
+        <li key={item.publicId}>{item.publicId} · {item.name}</li>
       ))}
     </ul>
   )

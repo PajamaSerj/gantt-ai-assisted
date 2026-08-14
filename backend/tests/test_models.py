@@ -13,7 +13,7 @@ def valid_task_data() -> dict:
         "public_id": "TASK-001",
         "name": "Backend",
         "description": " API foundation ",
-        "assignee": " Sergey ",
+        "assignee": " Сергей ",
         "duration_workdays": 2,
         "predecessor_ids": (),
         "start_date": date(2026, 8, 17),
@@ -26,7 +26,7 @@ def test_task_normalizes_human_text_and_is_immutable() -> None:
     task = Task(**valid_task_data())
 
     assert task.description == "API foundation"
-    assert task.assignee == "Sergey"
+    assert task.assignee == "Сергей"
     with pytest.raises(ValidationError):
         task.name = "Changed"
 

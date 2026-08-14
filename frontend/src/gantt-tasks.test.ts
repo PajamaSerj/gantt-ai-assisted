@@ -42,20 +42,20 @@ describe('gantt task presentation', () => {
     const unchangedTask2 = tasks.find((task) => task.id === 'TASK-002')
 
     expect(currentTask3).toMatchObject({
-      name: 'Сейчас: 3 · Backend foundation',
+      name: 'Сейчас: 3 · Основа бэкенда',
       start: '2026-02-05',
       end: '2026-02-11',
       dependencies: '',
       custom_class: 'gantt-task-preview-current',
     })
     expect(proposedTask3).toMatchObject({
-      name: 'После применения: 3 · Backend foundation',
+      name: 'После применения: 3 · Основа бэкенда',
       start: '2026-02-12',
       end: '2026-02-18',
       dependencies: 'TASK-001',
       custom_class: 'gantt-task-preview-proposed',
     })
-    expect(unchangedTask2?.name).toBe('2 · UX design')
+    expect(unchangedTask2?.name).toBe('2 · UX-дизайн')
     expect(tasks).toHaveLength(11)
   })
 })

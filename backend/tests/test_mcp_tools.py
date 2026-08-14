@@ -45,14 +45,14 @@ def test_read_tools_resolve_public_id_and_unique_name() -> None:
 
     by_id = asyncio.run(call_in_context(context, "get_task", {"identifier": "TASK-003"}))
     by_name = asyncio.run(
-        call_in_context(context, "get_task", {"identifier": "Backend foundation"})
+        call_in_context(context, "get_task", {"identifier": "Основа бэкенда"})
     )
     dependencies = asyncio.run(
         call_in_context(context, "get_dependencies", {"identifier": "TASK-005"})
     )
 
     assert by_id == by_name
-    assert by_id["task"]["name"] == "Backend foundation"
+    assert by_id["task"]["name"] == "Основа бэкенда"
     assert [task["public_id"] for task in dependencies["predecessors"]] == [
         "TASK-003",
         "TASK-004",
@@ -71,7 +71,7 @@ def test_numeric_task_reference_uses_public_id_not_zero_based_position() -> None
 
     assert by_number == by_bare_number
     assert by_number["task"]["public_id"] == "TASK-007"
-    assert by_number["task"]["name"] == "Demo readiness"
+    assert by_number["task"]["name"] == "Подготовка демо"
 
     missing = asyncio.run(
         call_in_context(context, "get_task", {"identifier": "task 8"})
@@ -100,7 +100,7 @@ def test_request_scoped_plan_context_is_isolated() -> None:
 
     names = asyncio.run(read_both())
 
-    assert names == ["Product discovery", "Isolated plan"]
+    assert names == ["Исследование продукта", "Isolated plan"]
 
 
 def test_prepare_tool_does_not_mutate_and_apply_is_guarded() -> None:

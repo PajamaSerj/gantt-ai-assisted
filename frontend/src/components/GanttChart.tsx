@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Gantt from 'frappe-gantt'
 
 import {
@@ -74,6 +74,31 @@ export function GanttChart({
   const pendingDatesRef = useRef<ProvisionalGanttDates | null>(null)
   const suppressClickRef = useRef(false)
   const clickResetTimerRef = useRef<number | null>(null)
+  const [viewportWidth, setViewportWidth] = useState(0)
+
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const updateWidth = (reportedWidth?: number) => {
+      const measuredWidth = reportedWidth ?? container.getBoundingClientRect().width
+      const nextWidth = Math.max(0, Math.floor(measuredWidth))
+      setViewportWidth((currentWidth) =>
+        currentWidth === nextWidth ? currentWidth : nextWidth,
+      )
+    }
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') {
+      const handleWindowResize = () => updateWidth()
+      window.addEventListener('resize', handleWindowResize)
+      return () => window.removeEventListener('resize', handleWindowResize)
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries.find((candidate) => candidate.target === container)
+      updateWidth(entry?.contentRect.width)
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => () => {
     if (clickResetTimerRef.current !== null) {
@@ -105,7 +130,7 @@ export function GanttChart({
         interactionDisabled || interactionBusy || Boolean(preview),
       ),
       view_mode: viewModeRef.current,
-      view_modes: ganttViewModes(timelinePlan),
+      view_modes: ganttViewModes(timelinePlan, viewportWidth),
       scroll_to: taskBounds?.start || 'start',
       today_button: false,
       popup: false,
@@ -184,6 +209,7 @@ export function GanttChart({
     plan,
     preview,
     scrollToStartToken,
+    viewportWidth,
   ])
 
   useEffect(() => {
@@ -211,6 +237,7 @@ export function GanttChart({
       className={`gantt-host ${interactionDisabled || interactionBusy ? 'gantt-interaction-disabled' : 'gantt-interactive'}`}
       ref={containerRef}
       data-testid="gantt-chart"
+      data-viewport-width={viewportWidth}
     />
   )
 }

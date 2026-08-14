@@ -1,7 +1,7 @@
 import { act, render } from '@testing-library/react'
 import type { GanttOptions, GanttTask } from 'frappe-gantt'
 import type { ComponentProps } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildPendingPlanPreview } from '../pending-preview'
 import { makePlan, makeSergeyPendingScenario } from '../test/fixtures'
@@ -12,6 +12,24 @@ const ganttMock = vi.hoisted((): {
   tasks: GanttTask[]
   viewChanges: Array<{ mode: string; maintainPosition: boolean }>
 } => ({ options: null, tasks: [], viewChanges: [] }))
+
+const resizeMock = vi.hoisted((): {
+  callback: ResizeObserverCallback | null
+  target: Element | null
+} => ({ callback: null, target: null }))
+
+class ResizeObserverMock implements ResizeObserver {
+  constructor(callback: ResizeObserverCallback) {
+    resizeMock.callback = callback
+  }
+
+  observe(target: Element): void {
+    resizeMock.target = target
+  }
+
+  disconnect(): void {}
+  unobserve(): void {}
+}
 
 vi.mock('frappe-gantt', () => ({
   default: class MockGantt {
@@ -57,6 +75,25 @@ function renderChart(overrides: Partial<ComponentProps<typeof GanttChart>> = {})
   }
   return { ...render(<GanttChart {...props} />), plan, props }
 }
+
+function resizeChart(width: number): void {
+  if (!resizeMock.callback || !resizeMock.target) {
+    throw new Error('Gantt ResizeObserver is not connected')
+  }
+  const entry = {
+    target: resizeMock.target,
+    contentRect: { width },
+  } as ResizeObserverEntry
+  act(() => resizeMock.callback?.([entry], {} as ResizeObserver))
+}
+
+beforeEach(() => {
+  resizeMock.callback = null
+  resizeMock.target = null
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+})
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('interactive Gantt integration', () => {
   it('keeps a plain task click opening details and hides left resize', () => {
@@ -126,5 +163,25 @@ describe('interactive Gantt integration', () => {
 
     expect(ganttMock.options?.readonly).toBe(true)
     expect(ganttMock.options?.readonly_dates).toBe(true)
+  })
+
+  it('rebuilds viewport-filling columns when the Gantt container changes width', () => {
+    const { current } = makeSergeyPendingScenario()
+    const { container } = renderChart({ plan: current })
+
+    resizeChart(1600)
+    const wideWeek = ganttMock.options?.view_modes?.find(
+      (mode) => mode.name === 'Week',
+    )
+    expect(wideWeek?.column_width).toBe(229)
+    expect((wideWeek?.column_width ?? 0) * 7).toBeGreaterThanOrEqual(1600)
+
+    resizeChart(1100)
+    const drawerOpenWeek = ganttMock.options?.view_modes?.find(
+      (mode) => mode.name === 'Week',
+    )
+    expect(drawerOpenWeek?.column_width).toBe(158)
+    expect((drawerOpenWeek?.column_width ?? 0) * 7).toBeGreaterThanOrEqual(1100)
+    expect(container.querySelector('[data-viewport-width="1100"]')).not.toBeNull()
   })
 })

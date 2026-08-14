@@ -79,7 +79,7 @@ def test_safe_edit_reads_through_mcp_and_applies() -> None:
     initial_provider_input = json.dumps(
         provider.requests[0]["input_items"], ensure_ascii=False
     )
-    assert "Product discovery" not in initial_provider_input
+    assert "Исследование продукта" not in initial_provider_input
     assert all(
         tool["name"] != "apply_changes"
         for tool in provider.requests[0]["tools"]
@@ -297,7 +297,7 @@ def test_dependency_shift_returns_consolidated_transitive_confirmation() -> None
         final_turn("Перенос подготовлен."),
     )
 
-    response = run_chat(provider, "Перенеси Backend foundation", plan=source)
+    response = run_chat(provider, "Перенеси Основу бэкенда", plan=source)
 
     assert response.status == "confirmation_required"
     assert response.plan == source
@@ -368,7 +368,7 @@ def test_unseen_assignee_requires_confirmation() -> None:
 
     assert response.status == "confirmation_required"
     assert response.pending_changeset.confirmation_reasons[0].code == "NEW_ASSIGNEE"
-    assert response.plan.tasks[0].assignee == "Anna"
+    assert response.plan.tasks[0].assignee == "Анна"
 
 
 def test_create_without_placement_returns_clarification() -> None:

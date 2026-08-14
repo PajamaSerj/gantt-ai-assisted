@@ -237,7 +237,7 @@ describe('Iteration 04 integration state', () => {
 
   it('restores seed and clears conversation and pending state', async () => {
     const user = userEvent.setup()
-    const seed = makePlan()
+    const { current: seed } = makeSergeyPendingScenario()
     persistPlannerState(localStorage, {
       plan: makePlan('Изменённый план'),
       conversationContext: [{ role: 'user', content: 'Измени план' }],
@@ -255,29 +255,37 @@ describe('Iteration 04 integration state', () => {
     await user.click(screen.getByRole('button', { name: /Восстановить демо/ }))
 
     expect(await screen.findByText(/TASK-001 Исследование продукта/)).toBeInTheDocument()
+    expect(screen.getByText(/TASK-007 Подготовка демо/)).toBeInTheDocument()
     expect(window.confirm).toHaveBeenCalledWith(
       'Восстановить демо-план? Текущие изменения и история AI будут удалены.',
     )
     expect(screen.getByRole('status')).toHaveTextContent('Демо-план восстановлен.')
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}').state
+    expect(saved.plan.tasks[2]).toMatchObject({
+      name: 'Основа бэкенда',
+      description: 'Реализовать базовую архитектуру API планировщика.',
+      assignee: 'Сергей',
+    })
     expect(saved.conversationContext).toEqual([])
     expect(saved.pendingChange).toBeNull()
   })
 
   it('opens read-only task details with public relations and no visible UUID', async () => {
     const user = userEvent.setup()
-    stored()
+    const { current } = makeSergeyPendingScenario()
+    stored(current)
     render(<App />)
 
-    await user.click(screen.getByRole('button', { name: /TASK-002 UX-дизайн/ }))
+    await user.click(screen.getByRole('button', {
+      name: /TASK-004 Основа фронтенда/,
+    }))
 
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveTextContent('TASK-002')
+    expect(dialog).toHaveTextContent('TASK-004')
     expect(dialog).toHaveTextContent('Зависит от')
-    expect(dialog).toHaveTextContent('Исследование продукта')
+    expect(dialog).toHaveTextContent('TASK-002 · UX-дизайн')
     expect(dialog).toHaveTextContent('Влияет на')
-    expect(dialog).not.toHaveTextContent('TASK-001')
-    expect(dialog).not.toHaveTextContent('1 · Исследование продукта')
+    expect(dialog).toHaveTextContent('TASK-005 · Интеграция приложения')
     expect(dialog).toHaveTextContent('Только просмотр')
     expect(dialog).not.toHaveTextContent('00000000-0000-4000')
   })
@@ -581,11 +589,11 @@ describe('Iteration 04 integration state', () => {
       'Из-за зависимостей сдвинутся ещё 2 задачи.',
     )).toBeInTheDocument()
     expect(screen.getByText('5–11 февр. → 12–18 февр.')).toBeInTheDocument()
-    expect(screen.getByText('3 · Backend foundation')).toBeInTheDocument()
-    expect(screen.getByText('5 · Application integration')).toBeInTheDocument()
-    expect(screen.getByText('6 · End-to-end QA')).toBeInTheDocument()
-    expect(screen.getByText('7 · Demo readiness')).toBeInTheDocument()
-    expect(screen.getByText('Сдвинется из-за зависимости от «Application integration»')).toBeInTheDocument()
+    expect(screen.getByText('3 · Основа бэкенда')).toBeInTheDocument()
+    expect(screen.getByText('5 · Интеграция приложения')).toBeInTheDocument()
+    expect(screen.getByText('6 · Сквозное тестирование')).toBeInTheDocument()
+    expect(screen.getByText('7 · Подготовка демо')).toBeInTheDocument()
+    expect(screen.getByText('Сдвинется из-за зависимости от «Интеграция приложения»')).toBeInTheDocument()
     expect(screen.queryByText(/must start after/)).not.toBeInTheDocument()
     expect(document.body).not.toHaveTextContent('00000000-0000-4000')
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}').state.plan.tasks[2].start_date).toBe('2026-02-05')
