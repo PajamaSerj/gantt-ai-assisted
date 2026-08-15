@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$ImageTag = "ai-gantt-planner:local",
     [ValidateRange(1, 65535)]
@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Net.Http
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $containerName = "ai-gantt-planner-smoke-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 $containerCreated = $false
@@ -115,8 +116,12 @@ try {
     $running = (& docker inspect --format "{{.State.Running}}" $containerName 2>&1 | Out-String).Trim()
     Assert-Smoke (($LASTEXITCODE -eq 0) -and ($running -eq "true")) "Container is not running."
 
-    $logs = (& docker logs $containerName 2>&1 | Out-String)
-    Assert-Smoke ($LASTEXITCODE -eq 0) "Could not read container logs."
+    # Uvicorn writes normal INFO logs to stderr. cmd.exe performs the
+    # redirection before Windows PowerShell 5.1 can convert it into
+    # a terminating NativeCommandError.
+    $logs = (& cmd.exe /d /c "docker logs $containerName 2>&1" | Out-String)
+    $logsExitCode = $LASTEXITCODE
+    Assert-Smoke ($logsExitCode -eq 0) "Could not read container logs."
     Assert-Smoke ($logs -notmatch "Traceback") "Container logs contain a Python traceback."
 
     $runtimeUid = (& docker exec $containerName id -u 2>&1 | Out-String).Trim()
@@ -134,3 +139,5 @@ finally {
         & docker rm --force $containerName *> $null
     }
 }
+
+
