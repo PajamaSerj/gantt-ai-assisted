@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Net.Http
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+. (Join-Path $PSScriptRoot "build-contract.ps1")
 $containerName = "ai-gantt-planner-smoke-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 $containerCreated = $false
 $httpClient = [System.Net.Http.HttpClient]::new()
@@ -55,9 +56,18 @@ try {
     Assert-Smoke ($LASTEXITCODE -eq 0) "Docker daemon is not available."
 
     if (-not $SkipBuild) {
-        & docker build --file (Join-Path $repositoryRoot "Dockerfile") --tag $ImageTag $repositoryRoot
+        $buildHelp = (& docker build --help 2>&1 | Out-String)
+        Assert-Smoke ($LASTEXITCODE -eq 0) "Could not inspect the installed Docker build contract."
+        Assert-ProductionDockerBuildHelp -HelpText $buildHelp
+        $buildArguments = Get-ProductionDockerBuildArguments `
+            -ImageTag $ImageTag -RepositoryRoot $repositoryRoot
+        & docker @buildArguments
         Assert-Smoke ($LASTEXITCODE -eq 0) "docker build failed."
     }
+
+    $imageJson = (& docker image inspect $ImageTag 2>&1 | Out-String)
+    Assert-Smoke ($LASTEXITCODE -eq 0) "Local Docker tag '$ImageTag' could not be inspected."
+    [void](Assert-ProductionDockerImageJson -JsonText $imageJson -ExpectedTag $ImageTag)
 
     $runArguments = @(
         "run",

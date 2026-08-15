@@ -9,6 +9,65 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
+. (Join-Path $PSScriptRoot "..\docker\build-contract.ps1")
+
+function Get-LocalProductionImageDescriptor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ImageTag
+    )
+
+    $inspect = Invoke-NativeCommand -FilePath "docker" -Arguments @(
+        "image", "inspect", $ImageTag
+    )
+    $json = $inspect.Output -join [Environment]::NewLine
+    return (Assert-ProductionDockerImageJson -JsonText $json -ExpectedTag $ImageTag)
+}
+
+function Get-RemoteImmutableRegistryImage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RegistryId,
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryName,
+        [Parameter(Mandatory = $true)]
+        [string]$Tag,
+        [Parameter(Mandatory = $true)]
+        [string]$FolderId
+    )
+
+    $images = @(Invoke-YcJson -Arguments @(
+        "container", "image", "list", "--registry-id", $RegistryId
+    ) -FolderId $FolderId)
+    return (Resolve-RegistryImageByTag -Images $images -RegistryId $RegistryId `
+        -RepositoryName $RepositoryName -Tag $Tag)
+}
+
+function Wait-RemoteImmutableRegistryImage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RegistryId,
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryName,
+        [Parameter(Mandatory = $true)]
+        [string]$Tag,
+        [Parameter(Mandatory = $true)]
+        [string]$FolderId,
+        [int]$Attempts = 6
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+        $image = Get-RemoteImmutableRegistryImage -RegistryId $RegistryId `
+            -RepositoryName $RepositoryName -Tag $Tag -FolderId $FolderId
+        if ($image) {
+            return $image
+        }
+        if ($attempt -lt $Attempts) {
+            Start-Sleep -Seconds 2
+        }
+    }
+    throw "Yandex Container Registry did not expose completed immutable tag '$RegistryId/$RepositoryName`:$Tag' with a digest after push; revision deployment was not attempted."
+}
 
 $settings = Import-DeploymentConfig -Path $Config
 Assert-CommandAvailable -Name "yc" -InstallMessage "Install and initialize the Yandex Cloud CLI outside this script."
@@ -108,6 +167,7 @@ $plan = @(
     "Git commit: $($gitIdentity.FullSha)",
     "Immutable local image: $localImage",
     "Immutable remote image: $remoteImage",
+    "Production image contract: linux/amd64 single manifest; provenance and SBOM attestations disabled for this registry path.",
     "Run accepted local Docker smoke before push: $(-not $SkipLocalSmoke)",
     "Push only the immutable Git-SHA tag.",
     "Deploy a new revision; preserve every previous revision and image.",
@@ -147,10 +207,14 @@ if ($activeRevision) {
 
 try {
     if ($SkipLocalSmoke) {
-        [void](Invoke-NativeCommand -FilePath "docker" -Arguments @(
-            "build", "--file", (Join-Path $repositoryRoot "Dockerfile"),
-            "--tag", $localImage, $repositoryRoot
-        ))
+        $dockerBuildHelp = Invoke-NativeCommand -FilePath "docker" -Arguments @(
+            "build", "--help"
+        )
+        Assert-ProductionDockerBuildHelp `
+            -HelpText ($dockerBuildHelp.Output -join [Environment]::NewLine)
+        $productionBuildArguments = Get-ProductionDockerBuildArguments `
+            -ImageTag $localImage -RepositoryRoot $repositoryRoot
+        [void](Invoke-NativeCommand -FilePath "docker" -Arguments $productionBuildArguments)
     }
     else {
         $powerShell = Get-CurrentPowerShellExecutable
@@ -160,13 +224,45 @@ try {
         ))
     }
 
+    [void](Get-LocalProductionImageDescriptor -ImageTag $localImage)
+
     [void](Invoke-NativeCommand -FilePath "docker" -Arguments @(
         "tag", $localImage, $remoteImage
     ))
-    [void](Invoke-NativeCommand -FilePath "docker" -Arguments @(
-        "push", $remoteImage
-    ))
-    $imagePushed = $true
+    $taggedLocalImage = Get-LocalProductionImageDescriptor -ImageTag $remoteImage
+    $remoteRepository = "cr.yandex/$registryId/$($settings.RepositoryName)"
+    $existingRemoteImage = Get-RemoteImmutableRegistryImage -RegistryId $registryId `
+        -RepositoryName $settings.RepositoryName -Tag $gitIdentity.ShortSha `
+        -FolderId $settings.FolderId
+    $verifiedRemoteImage = $null
+    if ($existingRemoteImage) {
+        $knownLocalDigest = Get-ProductionDockerRepositoryDigest `
+            -ImageDescriptor $taggedLocalImage -Repository $remoteRepository
+        if ((-not $knownLocalDigest) -or ($knownLocalDigest -cne $existingRemoteImage.Digest)) {
+            throw "Immutable remote tag '$remoteImage' already exists with digest '$($existingRemoteImage.Digest)', but the local image cannot be proven identical. Refusing to overwrite the tag."
+        }
+        $verifiedRemoteImage = $existingRemoteImage
+        Write-Host "Existing immutable remote image matches the local digest; push is not repeated."
+    }
+    else {
+        [void](Invoke-NativeCommand -FilePath "docker" -Arguments @(
+            "push", $remoteImage
+        ))
+        $imagePushed = $true
+        $verifiedRemoteImage = Wait-RemoteImmutableRegistryImage -RegistryId $registryId `
+            -RepositoryName $settings.RepositoryName -Tag $gitIdentity.ShortSha `
+            -FolderId $settings.FolderId
+
+        $pushedLocalImage = Get-LocalProductionImageDescriptor -ImageTag $remoteImage
+        $pushedLocalDigest = Get-ProductionDockerRepositoryDigest `
+            -ImageDescriptor $pushedLocalImage -Repository $remoteRepository
+        if ($pushedLocalDigest -and ($pushedLocalDigest -cne $verifiedRemoteImage.Digest)) {
+            throw "Remote digest '$($verifiedRemoteImage.Digest)' does not match local pushed digest '$pushedLocalDigest'; revision deployment was not attempted."
+        }
+    }
+    if (-not $verifiedRemoteImage) {
+        throw "Immutable remote image verification did not complete; revision deployment was not attempted."
+    }
 
     $environment = "YANDEX_CLOUD_FOLDER_ID=$($settings.FolderId),AI_MODEL=$($settings.AiModel),AI_BASE_URL=$($settings.AiBaseUrl)"
     $secretAttachment = "environment-variable=YANDEX_CLOUD_API_KEY,id=$secretId,version-id=$($secretVersion.VersionId),key=$($settings.LockboxSecretKey)"

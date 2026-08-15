@@ -87,7 +87,7 @@ def test_plan_guards_precede_every_mutating_entry_point() -> None:
             '"allow-unauthenticated-invoke"',
         ),
         "deploy.ps1": (
-            '"build"',
+            "Get-ProductionDockerBuildArguments",
             '"push"',
             '"revision", "deploy"',
         ),
@@ -142,6 +142,60 @@ def test_deploy_uses_immutable_sha_lockbox_and_local_gate() -> None:
     assert "key=" in deploy
     assert "environment-variable=YANDEX_CLOUD_API_KEY" in deploy
     assert '"delete"' not in deploy
+
+
+def test_deploy_verifies_remote_sha_image_before_revision() -> None:
+    deploy = script("deploy.ps1")
+
+    push_index = deploy.index('"push"')
+    post_push_verification_index = deploy.index(
+        "Wait-RemoteImmutableRegistryImage", push_index
+    )
+    revision_index = deploy.index(
+        '"serverless", "container", "revision", "deploy"',
+        post_push_verification_index,
+    )
+
+    assert push_index < post_push_verification_index < revision_index
+    assert '"container", "image", "list", "--registry-id"' in deploy
+    assert "Resolve-RegistryImageByTag" in deploy
+    assert "RepositoryName" in deploy
+    assert "ShortSha" in deploy
+    assert "digest" in deploy.lower()
+    assert "Refusing to overwrite the tag" in deploy
+    assert "revision deployment was not attempted" in deploy
+
+
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None,
+    reason="Windows PowerShell 5.1 is not available on this host",
+)
+def test_registry_image_match_requires_exact_repository_tag_and_digest() -> None:
+    common_path = str(YANDEX_ROOT / "common.ps1").replace("'", "''")
+    command = rf"""
+. '{common_path}'
+$images = @(
+    [pscustomobject]@{{ name = 'registry-id/planner'; tags = @('abc123'); digest = 'sha256:good' }},
+    [pscustomobject]@{{ name = 'registry-id/other'; tags = @('abc123'); digest = 'sha256:other' }}
+)
+$match = Resolve-RegistryImageByTag -Images $images -RegistryId 'registry-id' -RepositoryName 'planner' -Tag 'abc123'
+if ($match.Digest -ne 'sha256:good') {{ exit 8 }}
+if ($null -ne (Resolve-RegistryImageByTag -Images $images -RegistryId 'registry-id' -RepositoryName 'planner' -Tag 'missing')) {{ exit 7 }}
+try {{
+    Resolve-RegistryImageByTag -Images @(
+        [pscustomobject]@{{ name = 'registry-id/planner'; tags = @('abc123'); digest = '' }}
+    ) -RegistryId 'registry-id' -RepositoryName 'planner' -Tag 'abc123'
+    exit 6
+}}
+catch {{
+    if ($_.Exception.Message -notmatch 'digest') {{ exit 5 }}
+}}
+exit 0
+"""
+
+    result = run_windows_powershell(command)
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_rollback_preserves_history_and_requires_target() -> None:
@@ -265,11 +319,11 @@ exit 0
     reason="Windows PowerShell 5.1 is not available on this host",
 )
 def test_windows_powershell_51_parser_accepts_all_scripts() -> None:
-    escaped_root = str(YANDEX_ROOT).replace("'", "''")
+    escaped_root = str(REPOSITORY_ROOT / "infra").replace("'", "''")
     command = rf"""& {{
 param([string]$Root)
 $errors = @()
-Get-ChildItem -LiteralPath $Root -Filter *.ps1 | ForEach-Object {{
+Get-ChildItem -LiteralPath $Root -Filter *.ps1 -Recurse | ForEach-Object {{
     $tokens = $null
     $fileErrors = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile(

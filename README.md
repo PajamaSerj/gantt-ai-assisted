@@ -134,7 +134,8 @@ user. Runtime configuration is supplied through environment variables; local
 Build and run locally on the default port:
 
 ```powershell
-docker build --tag ai-gantt-planner:local .
+docker build --platform linux/amd64 --provenance=false --sbom=false `
+  --tag ai-gantt-planner:local .
 docker run --rm --publish 8080:8080 --env PORT=8080 ai-gantt-planner:local
 ```
 
@@ -154,6 +155,14 @@ Optional parameters include `-ImageTag`, `-Port`, `-EnvFile`, `-SkipBuild`, and
 `-KeepContainer`. The baseline smoke does not require cloud credentials. If an
 environment file is supplied, keep it local; it is read only at container
 runtime and must not be committed.
+
+Production delivery uses one Linux AMD64 image manifest. Provenance and SBOM
+attestations are disabled explicitly only in these project build commands for
+compatibility with the current Yandex Container Registry endpoint; this does
+not alter Docker Desktop globally. A future OCI registry or CI pipeline may
+re-enable attestations when its manifest support is confirmed. The smoke script
+and both Yandex deploy build paths consume the same checked build contract and
+reject Docker CLIs that do not expose the required flags.
 
 The reviewed Yandex Cloud bootstrap, immutable-SHA deploy, cloud smoke, and
 rollback workflow is documented in

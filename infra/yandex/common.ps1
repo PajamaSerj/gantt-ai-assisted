@@ -238,6 +238,51 @@ function Invoke-YcMutation {
     return $result
 }
 
+function Resolve-RegistryImageByTag {
+    param(
+        [AllowEmptyCollection()]
+        [object[]]$Images = @(),
+        [Parameter(Mandatory = $true)]
+        [string]$RegistryId,
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryName,
+        [Parameter(Mandatory = $true)]
+        [string]$Tag
+    )
+
+    $expectedRepository = "$RegistryId/$RepositoryName"
+    $matches = @($Images | Where-Object {
+        $image = $_
+        $name = [string](Get-ObjectProperty -InputObject $image -Name "name")
+        if (-not [string]::Equals($name, $expectedRepository, [StringComparison]::Ordinal)) {
+            return $false
+        }
+        foreach ($candidateTag in @((Get-ObjectProperty -InputObject $image -Name "tags"))) {
+            if ([string]::Equals([string]$candidateTag, $Tag, [StringComparison]::Ordinal)) {
+                return $true
+            }
+        }
+        return $false
+    })
+    if ($matches.Count -gt 1) {
+        throw "Registry returned multiple completed images for immutable tag '$expectedRepository`:$Tag'."
+    }
+    if ($matches.Count -eq 0) {
+        return $null
+    }
+
+    $digest = [string](Get-ObjectProperty -InputObject $matches[0] -Name "digest")
+    if ([string]::IsNullOrWhiteSpace($digest)) {
+        throw "Registry image '$expectedRepository`:$Tag' has no digest; deployment cannot continue."
+    }
+    return [pscustomobject]@{
+        Repository = $expectedRepository
+        Tag = $Tag
+        Digest = $digest
+        Raw = $matches[0]
+    }
+}
+
 function Assert-YcHelpContains {
     param(
         [Parameter(Mandatory = $true)]

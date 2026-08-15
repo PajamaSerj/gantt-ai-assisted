@@ -22,6 +22,8 @@ contract and fail before deployment if the required flags are unavailable.
 - Initialize the Yandex Cloud CLI manually with `yc init`.
 - Select or obtain access to the target folder.
 - Start Docker Desktop or another compatible Docker daemon.
+- Use a Docker CLI whose `docker build` supports `--platform`, `--provenance`,
+  and `--sbom`; automation fails before build/push when this contract is absent.
 - Use Git with a clean worktree for deployment.
 - Ensure the Human operator can create the planned resources and bindings.
 - Ensure the operator has `iam.serviceAccounts.user` for the runtime service
@@ -133,20 +135,35 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 After confirmation the script:
 
-1. runs `infra/docker/smoke.ps1` with `ai-gantt-planner:<git-sha>`;
-2. tags and pushes `cr.yandex/<registry-id>/<repository>:<git-sha>`;
-3. deploys a new revision from that immutable tag;
-4. attaches only non-secret provider/folder environment values;
-5. attaches the Lockbox entry by secret ID, version ID, key, and target variable;
-6. preserves all old images/revisions and runs cloud smoke.
+1. builds and locally smokes `ai-gantt-planner:<git-sha>` as `linux/amd64` with
+   provenance and SBOM attestations disabled;
+2. verifies that the local tag resolves to a Linux AMD64 image;
+3. refuses to overwrite an existing SHA tag unless its remote digest is already
+   provably identical to the local repository digest;
+4. tags and pushes `cr.yandex/<registry-id>/<repository>:<git-sha>`;
+5. resolves the exact remote repository/tag and requires its digest before
+   attempting revision deployment;
+6. deploys a new revision from that immutable tag;
+7. attaches only non-secret provider/folder environment values;
+8. attaches the Lockbox entry by secret ID, version ID, key, and target variable;
+9. preserves all old images/revisions and runs cloud smoke.
 
 `-SkipLocalSmoke` is an explicit exceptional override; it still builds the
 immutable local image before push. The revision always uses the SHA tag, never
-`:latest`.
+`:latest`; the override consumes exactly the same production build arguments as
+the normal smoke path.
 
-If image push succeeds but revision deployment fails, the image is retained and
-reported. If deployment succeeds but smoke fails, no automatic rollback occurs;
-the previous revision and an exact rollback command are printed.
+The attestation settings are scoped to this repository's Yandex Registry
+delivery path. They are a manifest-format compatibility measure, not a global
+Docker security setting. Future CI/CD or another OCI registry may re-enable
+provenance and SBOM attestations after compatibility is verified.
+
+If image push or remote repository/tag/digest verification fails, revision
+deployment is not attempted. Uploaded layers and unrelated registry data are
+never deleted automatically. If image push succeeds but revision deployment
+fails, the image is retained and reported. If deployment succeeds but smoke
+fails, no automatic rollback occurs; the previous revision and an exact
+rollback command are printed.
 
 ## 10. Cloud smoke
 
