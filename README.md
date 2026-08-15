@@ -29,7 +29,7 @@ Containers.
 Материалы для проверки:
 
 - [пример Excel](sample/sample_tasks.xlsx);
-- [сценарий записи демонстрации](docs/demo/README.md);
+- [demo video](docs/demo/ai-gantt-demo.mp4) и [сценарий демонстрации](docs/demo/README.md);
 - [архитектура](docs/ARCHITECTURE.md);
 - [Roadmap to Production](docs/ROADMAP_TO_PRODUCTION.md);
 - [матрица требований](docs/SUBMISSION_CHECKLIST.md).
