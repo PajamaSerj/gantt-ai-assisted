@@ -89,7 +89,7 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
             issues=(
                 ImportIssue(
                     code="INVALID_EXTENSION",
-                    message="Only .xlsx workbooks are supported",
+                    message="Поддерживаются только файлы .xlsx.",
                 ),
             ),
         )
@@ -106,13 +106,16 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
         KeyError,
         OSError,
         ValueError,
-    ) as error:
+    ):
         return ParsedWorkbook(
             rows=(),
             issues=(
                 ImportIssue(
                     code="UNREADABLE_WORKBOOK",
-                    message=f"Workbook cannot be read: {error}",
+                    message=(
+                        "Не удалось прочитать Excel-файл. Проверьте, что файл "
+                        "не повреждён и имеет формат .xlsx."
+                    ),
                 ),
             ),
         )
@@ -125,7 +128,7 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
                 issues=(
                     ImportIssue(
                         code="MISSING_ACTIVE_WORKSHEET",
-                        message="Workbook has no active worksheet",
+                        message="В книге нет активного листа.",
                     ),
                 ),
             )
@@ -145,7 +148,7 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
                 issues=(
                     ImportIssue(
                         code="EMPTY_WORKSHEET",
-                        message="Active worksheet is empty",
+                        message="Активный лист пуст.",
                     ),
                 ),
             )
@@ -159,7 +162,10 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
                 issues.append(
                     ImportIssue(
                         code="DUPLICATE_COLUMN",
-                        message=f"Column '{header}' appears more than once",
+                        message=(
+                            f"Обязательная колонка «{header}» указана больше "
+                            "одного раза."
+                        ),
                         row=header_number,
                         column=header,
                     )
@@ -172,7 +178,7 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
                 issues.append(
                     ImportIssue(
                         code="MISSING_COLUMN",
-                        message=f"Required column '{required}' is missing",
+                        message=f"Не найдена обязательная колонка «{required}».",
                         row=header_number,
                         column=required,
                     )
@@ -200,7 +206,7 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
                 issues.append(
                     ImportIssue(
                         code="MISSING_TASK_NAME",
-                        message="Task name is required",
+                        message="Укажите название задачи.",
                         row=row_number,
                         column="задача",
                     )
@@ -209,11 +215,15 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
             else:
                 try:
                     name = normalize_task_name(name)
-                except ValueError as error:
+                except ValueError:
                     issues.append(
                         ImportIssue(
                             code="INVALID_TASK_NAME",
-                            message=str(error),
+                            message=(
+                                "Название задачи не может содержать «;»: этот "
+                                "символ используется как разделитель "
+                                "предшественников в Excel."
+                            ),
                             row=row_number,
                             column="задача",
                         )
@@ -226,8 +236,9 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
                             ImportIssue(
                                 code="DUPLICATE_TASK_NAME",
                                 message=(
-                                    f"Task name '{name}' duplicates row "
-                                    f"{name_rows[normalized_name]}"
+                                    f"Название задачи «{name}» повторяет строку "
+                                    f"{name_rows[normalized_name]}. Названия "
+                                    "задач должны быть уникальными."
                                 ),
                                 row=row_number,
                                 column="задача",
@@ -241,7 +252,10 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
                 issues.append(
                     ImportIssue(
                         code="INVALID_DURATION",
-                        message="Duration must be a positive integer",
+                        message=(
+                            "Длительность должна быть положительным целым "
+                            "числом рабочих дней."
+                        ),
                         row=row_number,
                         column="длительность",
                     )
@@ -252,7 +266,10 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
                 issues.append(
                     ImportIssue(
                         code="INVALID_PREDECESSORS",
-                        message="Predecessors must be names separated by ';'",
+                        message=(
+                            "Предшественники должны быть указаны названиями "
+                            "задач через «;»."
+                        ),
                         row=row_number,
                         column="предшественники",
                     )
@@ -279,7 +296,7 @@ def parse_xlsx(file_name: str, content: bytes) -> ParsedWorkbook:
             issues.append(
                 ImportIssue(
                     code="NO_TASK_ROWS",
-                    message="Active worksheet contains no task rows",
+                    message="На активном листе нет строк с задачами.",
                 )
             )
         return ParsedWorkbook(rows=tuple(parsed_rows), issues=tuple(issues))

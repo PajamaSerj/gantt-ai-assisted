@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import App from './App'
@@ -415,6 +415,66 @@ describe('Iteration 04 integration state', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/api/import', '/api/import'])
+  })
+
+  it('renders localized Excel issues without codes and keeps the plan unchanged', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    stored(source)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      status: 'VALIDATION_FAILED',
+      unchanged_plan: source,
+      changeset: null,
+      errors: [
+        {
+          code: 'UNKNOWN_PREDECESSOR',
+          message: (
+            'Предшественник «Интеграция приложения» не найден. В режиме замены ' +
+            'он должен быть отдельной задачей в загружаемом Excel.'
+          ),
+          row: 2,
+          column: 'предшественники',
+        },
+        {
+          code: 'UNREADABLE_WORKBOOK',
+          message: (
+            'Не удалось прочитать Excel-файл. Проверьте, что файл не повреждён ' +
+            'и имеет формат .xlsx.'
+          ),
+          row: null,
+          column: null,
+        },
+      ],
+    }))
+    render(<App />)
+    const originalStart = screen.getByTestId('gantt-chart').getAttribute(
+      'data-active-task-1-start',
+    )
+    const file = new File(['xlsx'], 'append-oriented.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    await user.click(screen.getByRole('button', { name: /Excel/ }))
+    await user.upload(screen.getByLabelText('Выбрать Excel для импорта'), file)
+    await user.click(screen.getByRole('button', { name: 'Проверить и импортировать' }))
+
+    const panel = await screen.findByRole('region', {
+      name: 'Исправьте ошибки в Excel',
+    })
+    expect(within(panel).getByText('Строка 2')).toBeInTheDocument()
+    expect(within(panel).getByText('Файл Excel')).toBeInTheDocument()
+    expect(panel).toHaveTextContent('Предшественник «Интеграция приложения»')
+    expect(panel).toHaveTextContent('Не удалось прочитать Excel-файл')
+    expect(panel).not.toHaveTextContent('UNKNOWN_PREDECESSOR')
+    expect(panel).not.toHaveTextContent('UNREADABLE_WORKBOOK')
+    expect(panel.textContent).not.toMatch(
+      /Unknown predecessor|Task name|Duration must|Dependency cycle detected|Workbook cannot be read/,
+    )
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-active-task-1-start',
+      originalStart,
+    )
+    expect(screen.getByRole('button', { name: 'Excel' })).toBeEnabled()
   })
 
   it('surfaces an identical import as information without applying it', async () => {

@@ -373,6 +373,11 @@
   border-radius: 8px;
 }
 
+.validation-panel li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .pending-panel {
   border-left: 3px solid var(--warning);
 }

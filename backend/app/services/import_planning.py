@@ -5,13 +5,23 @@ from uuid import UUID, uuid4
 
 from app.domain.changesets import (
     AppendPlanChange,
+    ChangeConflict,
     ChangeSet,
     ChangeSetStatus,
     ReplacePlanChange,
     changeset_has_effect,
     prepare_changeset,
 )
-from app.domain.errors import DependencyCycleError, DomainValidationError
+from app.domain.errors import (
+    DependencyCycleError,
+    DomainValidationError,
+    DuplicateInternalIdError,
+    DuplicatePublicIdError,
+    DuplicateTaskNameError,
+    ScheduleValidationError,
+    SelfReferenceError,
+    UnknownPredecessorError,
+)
 from app.domain.graph import topological_order
 from app.domain.ids import format_public_id, next_public_id, public_ids_for_replace
 from app.domain.models import CreatedSource, PlanState, Task, TaskSpec
@@ -55,6 +65,124 @@ def _placeholder_task(spec: TaskSpec) -> Task:
     )
 
 
+def _unknown_predecessor_message(mode: ImportMode, name: str) -> str:
+    if mode is ImportMode.REPLACE:
+        return (
+            f"Предшественник «{name}» не найден. В режиме замены он должен "
+            "быть отдельной задачей в загружаемом Excel."
+        )
+    return (
+        f"Предшественник «{name}» не найден ни в загружаемом Excel, "
+        "ни в текущем плане."
+    )
+
+
+def _public_id_for_task(plan: PlanState, task_id: UUID | None) -> str | None:
+    if task_id is None:
+        return None
+    return next(
+        (
+            task.public_id
+            for task in plan.tasks
+            if task.internal_id == task_id
+        ),
+        None,
+    )
+
+
+def _current_plan_error_message(
+    error: DomainValidationError,
+    current_plan: PlanState,
+) -> str:
+    task_public_id = _public_id_for_task(
+        current_plan,
+        getattr(error, "task_id", None),
+    )
+    if isinstance(error, DuplicateTaskNameError):
+        names = ", ".join(f"«{name}»" for name in error.duplicate_names)
+        return f"В текущем плане повторяются названия задач: {names}."
+    if isinstance(error, UnknownPredecessorError):
+        task_reference = (
+            f"задача {task_public_id}"
+            if task_public_id
+            else "одна из задач"
+        )
+        return (
+            f"В текущем плане {task_reference} ссылается на отсутствующего "
+            "предшественника."
+        )
+    if isinstance(error, SelfReferenceError):
+        task_reference = (
+            f"Задача {task_public_id}"
+            if task_public_id
+            else "Задача в текущем плане"
+        )
+        return f"{task_reference} не может зависеть сама от себя."
+    if isinstance(error, DependencyCycleError):
+        path = " → ".join(
+            filter(
+                None,
+                (
+                    _public_id_for_task(current_plan, task_id)
+                    for task_id in error.cycle_path
+                ),
+            )
+        )
+        return (
+            f"В текущем плане обнаружен цикл зависимостей: {path}."
+            if path
+            else "В текущем плане обнаружен цикл зависимостей."
+        )
+    if isinstance(error, DuplicatePublicIdError):
+        return (
+            "В текущем плане повторяются TASK-ID: "
+            f"{', '.join(error.duplicate_ids)}."
+        )
+    if isinstance(error, DuplicateInternalIdError):
+        return "В текущем плане повторяется внутренний идентификатор задачи."
+    if isinstance(error, ScheduleValidationError):
+        suffix = f" для {task_public_id}" if task_public_id else ""
+        return f"Текущий план содержит некорректное расписание{suffix}."
+    return "Текущий план не прошёл проверку перед импортом."
+
+
+def _localized_conflict_message(conflict: ChangeConflict) -> str:
+    if conflict.code == "DuplicateTaskNameError":
+        return "Изменения импорта нарушают уникальность названий задач."
+    if conflict.code == "UnknownPredecessorError":
+        return (
+            f"Задача {conflict.task_public_id} ссылается на отсутствующего "
+            "предшественника."
+            if conflict.task_public_id
+            else "Одна из задач ссылается на отсутствующего предшественника."
+        )
+    if conflict.code == "SelfReferenceError":
+        return (
+            f"Задача {conflict.task_public_id} не может зависеть сама от себя."
+            if conflict.task_public_id
+            else "Задача не может зависеть сама от себя."
+        )
+    if conflict.code == "DependencyCycleError":
+        path = " → ".join(conflict.related_task_public_ids)
+        return (
+            f"Обнаружен цикл зависимостей: {path}."
+            if path
+            else "Обнаружен цикл зависимостей."
+        )
+    if conflict.code == "DuplicatePublicIdError":
+        return "Изменения импорта содержат повторяющиеся TASK-ID."
+    if conflict.code == "DuplicateInternalIdError":
+        return "Изменения импорта содержат повторяющиеся идентификаторы задач."
+    if conflict.code == "ScheduleValidationError":
+        return (
+            f"Расписание задачи {conflict.task_public_id} нарушает правила "
+            "планирования."
+            if conflict.task_public_id
+            else "Расписание импортируемого плана нарушает правила планирования."
+        )
+    return "Импорт не прошёл проверку целостности плана."
+
+
 def _resolve_specs(
     rows: tuple[ParsedTaskRow, ...],
     mode: ImportMode,
@@ -76,8 +204,8 @@ def _resolve_specs(
                 ImportIssue(
                     code="DUPLICATE_TASK_NAME",
                     message=(
-                        f"Task name '{row.name}' already exists as "
-                        f"{existing.public_id}"
+                        f"Задача «{row.name}» уже существует в текущем плане "
+                        f"как {existing.public_id}."
                     ),
                     row=row.row_number,
                     column="задача",
@@ -95,7 +223,10 @@ def _resolve_specs(
                 issues.append(
                     ImportIssue(
                         code="DUPLICATE_PREDECESSOR",
-                        message=f"Predecessor '{predecessor_name}' is repeated",
+                        message=(
+                            f"Предшественник «{predecessor_name}» указан "
+                            "повторно."
+                        ),
                         row=row.row_number,
                         column="предшественники",
                     )
@@ -107,7 +238,9 @@ def _resolve_specs(
                 issues.append(
                     ImportIssue(
                         code="SELF_REFERENCE",
-                        message=f"Task '{row.name}' cannot depend on itself",
+                        message=(
+                            f"Задача «{row.name}» не может зависеть сама от себя."
+                        ),
                         row=row.row_number,
                         column="предшественники",
                     )
@@ -122,7 +255,10 @@ def _resolve_specs(
                 issues.append(
                     ImportIssue(
                         code="UNKNOWN_PREDECESSOR",
-                        message=f"Unknown predecessor '{predecessor_name}'",
+                        message=_unknown_predecessor_message(
+                            mode,
+                            predecessor_name,
+                        ),
                         row=row.row_number,
                         column="предшественники",
                     )
@@ -156,7 +292,7 @@ def _resolve_specs(
         topological_order(graph_tasks)
     except DependencyCycleError as error:
         indexed = {task.internal_id: task for task in graph_tasks}
-        path = " -> ".join(
+        path = " → ".join(
             indexed[task_id].public_id
             for task_id in error.cycle_path
             if task_id in indexed
@@ -164,7 +300,7 @@ def _resolve_specs(
         issues.append(
             ImportIssue(
                 code="DEPENDENCY_CYCLE",
-                message=f"Dependency cycle detected: {path}",
+                message=f"Обнаружен цикл зависимостей: {path}.",
                 column="предшественники",
             )
         )
@@ -192,7 +328,7 @@ def prepare_import(
             (
                 ImportIssue(
                     code="INVALID_CURRENT_PLAN",
-                    message=str(error),
+                    message=_current_plan_error_message(error, current_plan),
                 ),
             ),
         )
@@ -212,7 +348,10 @@ def prepare_import(
             current_plan,
             None,
             tuple(
-                ImportIssue(code=conflict.code, message=conflict.message)
+                ImportIssue(
+                    code=conflict.code,
+                    message=_localized_conflict_message(conflict),
+                )
                 for conflict in changeset.conflicts
             ),
         )

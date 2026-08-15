@@ -6,7 +6,7 @@
 
 - Windows, Chromium (Playwright 1.62.1), Node.js 24.15.0, Python 3.12.13.
 - Viewport matrix: 1440×900, 1920×1080, 1024×768 и incident viewport 454×866.
-- Playwright: 19/19 сценариев прошли. Покрыты click/micro-drag, drag/resize, Apply/Cancel, invalid dependency drag, far-edge preview/Apply, edge/pointer/request recovery, no-op response guards, 21-операционный stress, persistence/Restore, AI drawer/help, Excel round-trip и SVG geometry.
+- Playwright: 23/23 сценария прошли. Покрыты click/micro-drag, drag/resize, Apply/Cancel, invalid dependency drag, far-edge preview/Apply, edge/pointer/request recovery, no-op response guards, Excel localization/Replace/Append, 21-операционный stress, persistence/Restore, AI drawer/help, Excel round-trip и SVG geometry.
 - Core interaction/stress: три последовательных прогона, 12/12 тестов прошли. Каждый повтор включает 21-операционный stress со сменой drag/resize/Apply/Cancel и выходом за обе границы timeline.
 - Визуально проверены baseline, AI drawer и same-row Change Preview во всех обязательных размерах, а также исправленные far-edge preview и applied chart на 454×866. Видео не создавалось; диагностические screenshots/traces сохранены только во временных игнорируемых каталогах.
 
@@ -31,6 +31,30 @@
 - Отдельная in-app Browser QA-сессия на 1280×720 подтвердила отсутствие pending heading и текста `0 задач`, отсутствие page-level horizontal overflow (`scrollWidth == clientWidth == 1280`), 7 видимых bars и 7 правых resize handles с `pointer-events: auto`; console warnings/errors отсутствовали.
 - Локальный live AI provider не настроен, поэтому прямой `/api/chat` корректно показал существующую ошибку конфигурации без pending state. Утверждённый no-op ответ проверен в реальном UI через детерминированный Playwright route interception, как и остальные AI-сценарии Iteration 04.6.
 - После no-op chat остаётся доступным, TASK-004 не меняется, а последующий direct drag продолжает штатный confirmation flow. Видео не записывалось; screenshots/traces создавались только для разбора падавших прогонов.
+
+## Rework 02 — локализация Excel validation
+
+### Воспроизведение и root cause
+
+- Воспроизведён captured Replace-сценарий с Append-oriented workbook: validation panel показывала `Unknown predecessor 'Интеграция приложения'` и `Unknown predecessor 'Сквозное тестирование'` без объяснения разрешённой области поиска в Replace mode.
+- Parser содержал английские строки для file/workbook, column и row validation и добавлял raw exception text для повреждённой книги. Import resolver использовал одну mode-agnostic английскую формулировку, а current-plan и ChangeSet conflicts передавали `str(error)`/domain message напрямую.
+- Frontend показывал machine-readable `code` вместо пользовательской подписи для file-level issue без номера строки. Для длинных сообщений не был зафиксирован явный wrapping contract.
+- До исправления целевой прогон зафиксировал 17 backend localization failures, 2 frontend failures и 2 ожидаемых Playwright localization failures. Дополнительно исправлена только тестовая проверка Append: после успешного добавления план штатно содержит 8, а не 7 bars; поведение продукта не менялось.
+
+### Исправление
+
+- Полностью локализованы сообщения `.xlsx` parsing, active worksheet, обязательных колонок, row fields, запрещённого `;`, duplicate names/predecessors, self-reference, mode-specific unknown predecessors и dependency cycles. `UNREADABLE_WORKBOOK` больше не раскрывает текст исключения openpyxl/ZIP.
+- Replace теперь детерминированно объясняет, что неизвестный predecessor должен присутствовать отдельной задачей в загружаемом Excel. Append объясняет поиск и в Excel, и в текущем плане.
+- Current-plan errors и ChangeSet conflicts локализуются на import boundary по стабильному типу/code; общие domain exceptions, scheduling, ChangeSet semantics и API error codes не изменялись.
+- Frontend больше не показывает raw code: file-level issue получает подпись `Файл Excel`, row-level issue сохраняет `Строка N`. Для текста validation issue добавлены `min-width: 0` и `overflow-wrap: anywhere` без изменения структуры панели.
+- Stable issue codes, row/column metadata, required columns, unknown-column ignore, active-sheet rule, `;` separator, atomicity и Replace/Append predecessor resolution сохранены.
+
+### Regression и визуальная проверка
+
+- Backend regressions покрывают все file/workbook errors, missing/duplicate columns, row validation, separator rule, duplicates, self-reference, Replace/Append unknown predecessors, public-ID cycle path, invalid current plan, conflict conversion, unknown extra columns и валидные Replace/Append.
+- Frontend integration проверяет русские сообщения, отсутствие raw codes/известных английских фрагментов, неизменность PlanState и доступность следующего импорта. Playwright использует реальные временные `.xlsx` fixtures и настоящий FastAPI pipeline: valid Replace, valid Append со ссылкой на demo plan, captured invalid Replace и invalid row.
+- В отдельной in-app Browser-сессии на 1280×720 validation panel полностью помещалась в document width (`right 1234 < clientWidth 1265`); оба сообщения имели `overflow-wrap: anywhere` и `scrollWidth == clientWidth == 825`. На странице осталось 7 bars/7 handles, file input был доступен, английских validation fragments и console warnings/errors не было.
+- Видео и success-screenshots не создавались. Failure screenshots/traces использовались только в первой падающей итерации и не входят в commit.
 
 ## Воспроизведённые дефекты и причины
 
@@ -76,13 +100,13 @@
 
 ## Итоговые проверки
 
-- Frontend unit/integration: 91/91.
+- Frontend unit/integration: 93/93.
 - Frontend lint: passed.
 - TypeScript + production build: passed.
-- Backend: 133/133.
+- Backend: 140/140.
 - Python dependency check: passed.
 - Frontend dependency tree: passed (`npm ls --all`; отсутствуют broken required dependencies).
-- Frontend Playwright: 19/19; no-op subset: 2/2; incident subset: 3/3; трёхкратный core repeat: 12/12.
+- Frontend Playwright: 23/23; Excel localization subset: 4/4; no-op subset: 2/2; incident subset: 3/3; трёхкратный core repeat: 12/12.
 - Неожиданные `pageerror`, console errors и application request failures: отсутствуют во всех прошедших E2E сценариях.
 - Live Qwen не запускался: обязательный AI happy path перехватывался валидным детерминированным ответом согласно iteration brief; локальная конфигурация provider отсутствует. Это не блокер стандартного QA.
 

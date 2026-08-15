@@ -29,6 +29,12 @@ describe('planner layout CSS contract', () => {
     expect(appStyles).toMatch(/\.toast-stack\s*\{[^}]*position:\s*fixed/s)
   })
 
+  it('allows long Excel validation messages to wrap without widening the layout', () => {
+    expect(appStyles).toMatch(
+      /\.validation-panel li span\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/s,
+    )
+  })
+
   it('uses minimal solid and dashed preview outline styles without row labels', () => {
     expect(appStyles).toMatch(
       /\.gantt-preview-proposed-direct[^}]*stroke-dasharray:\s*none/s,

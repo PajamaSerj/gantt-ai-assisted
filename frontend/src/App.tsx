@@ -41,6 +41,12 @@ function planFingerprint(plan: PlannerState['plan']): string {
   return JSON.stringify(plan)
 }
 
+function importIssueReference(issue: ImportIssue): string {
+  if (issue.row) return `Строка ${issue.row}`
+  if (issue.column) return `Колонка «${issue.column}»`
+  return 'Файл Excel'
+}
+
 function effectivePendingPreview(plan: NonNullable<PlannerState['plan']>, changeset: ChangeSet) {
   if (!changeset.proposed_plan) {
     throw new Error('Backend не вернул proposed PlanState для подтверждения')
@@ -592,7 +598,7 @@ function App() {
               <ul>
                 {importIssues.map((issue, index) => (
                   <li key={`${issue.code}-${issue.row}-${index}`}>
-                    <strong>{issue.row ? `Строка ${issue.row}` : issue.code}</strong>
+                    <strong>{importIssueReference(issue)}</strong>
                     <span>{issue.message}</span>
                   </li>
                 ))}
