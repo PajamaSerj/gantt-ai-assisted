@@ -150,6 +150,31 @@ function calendarDaysInclusive(start: string, end: string): number {
   return Math.round((endUtc - startUtc) / MILLISECONDS_PER_DAY) + 1
 }
 
+function calendarDaysBetween(start: Date, end: Date): number {
+  const startUtc = Date.UTC(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate(),
+  )
+  const endUtc = Date.UTC(
+    end.getFullYear(),
+    end.getMonth(),
+    end.getDate(),
+  )
+  return Math.round((endUtc - startUtc) / MILLISECONDS_PER_DAY)
+}
+
+function startOfMonth(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), 1, 12)
+}
+
+function monthsBetween(start: Date, end: Date): number {
+  return (
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    end.getMonth() - start.getMonth()
+  )
+}
+
 function timelineColumnCount(
   plan: PlanState,
   viewMode: GanttViewName,
@@ -200,24 +225,59 @@ function monthHeading(value: Date, previous: Date | null): string {
   return `${MONTHS_LONG[value.getMonth()]} ${value.getFullYear()}`
 }
 
-function weekPadding(plan: PlanState): [string, string] {
-  const bounds = planBounds(plan)
-  if (!bounds) return ['7d', '6d']
-  const start = parseIsoDate(bounds.start)
-  const end = parseIsoDate(bounds.end)
-  const daysSinceMonday = (start.getDay() + 6) % 7
-  const endDaysSinceMonday = (end.getDay() + 6) % 7
-  return [`${7 + daysSinceMonday}d`, `${6 - endDaysSinceMonday}d`]
+function timelinePadding(
+  timelinePlan: PlanState,
+  renderedPlan: PlanState,
+  viewMode: GanttViewName,
+): [string, string] {
+  const target = projectTimelineBounds(timelinePlan, viewMode)
+  const rendered = planBounds(renderedPlan)
+  if (!target || !rendered) {
+    if (viewMode === 'Day') return ['3d', '2d']
+    if (viewMode === 'Week') return ['7d', '6d']
+    return ['1m', '1m']
+  }
+
+  const renderedStart = parseIsoDate(rendered.start)
+  const renderedEndExclusive = addDays(parseIsoDate(rendered.end), 1)
+  const targetStart = parseIsoDate(target.start)
+  const targetEnd = parseIsoDate(target.end)
+
+  if (viewMode === 'Month') {
+    const startPadding = Math.max(0, monthsBetween(
+      startOfMonth(targetStart),
+      startOfMonth(renderedStart),
+    ))
+    const endPadding = Math.max(0, monthsBetween(
+      startOfMonth(renderedEndExclusive),
+      startOfMonth(targetEnd),
+    ))
+    return [`${startPadding}m`, `${endPadding}m`]
+  }
+
+  const targetLastColumn = viewMode === 'Week'
+    ? startOfIsoWeek(targetEnd)
+    : targetEnd
+  const startPadding = Math.max(
+    0,
+    calendarDaysBetween(targetStart, renderedStart),
+  )
+  const endPadding = Math.max(
+    0,
+    calendarDaysBetween(renderedEndExclusive, targetLastColumn),
+  )
+  return [`${startPadding}d`, `${endPadding}d`]
 }
 
 export function ganttViewModes(
   plan: PlanState,
   viewportWidth = 0,
+  renderedPlan = plan,
 ): GanttViewMode[] {
   return [
     {
       name: 'Day',
-      padding: ['3d', '2d'],
+      padding: timelinePadding(plan, renderedPlan, 'Day'),
       step: '1d',
       date_format: 'YYYY-MM-DD',
       column_width: timelineSizing(plan, 'Day', viewportWidth).columnWidth,
@@ -227,7 +287,7 @@ export function ganttViewModes(
     },
     {
       name: 'Week',
-      padding: weekPadding(plan),
+      padding: timelinePadding(plan, renderedPlan, 'Week'),
       step: '7d',
       date_format: 'YYYY-MM-DD',
       column_width: timelineSizing(plan, 'Week', viewportWidth).columnWidth,
@@ -238,7 +298,7 @@ export function ganttViewModes(
     },
     {
       name: 'Month',
-      padding: ['1m', '1m'],
+      padding: timelinePadding(plan, renderedPlan, 'Month'),
       step: '1m',
       date_format: 'YYYY-MM',
       column_width: timelineSizing(plan, 'Month', viewportWidth).columnWidth,

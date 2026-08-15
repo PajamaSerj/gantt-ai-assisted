@@ -61,7 +61,6 @@ type GanttGestureSession = {
   maximumMovement: number
   target: GanttGestureTarget
   crossedThreshold: boolean
-  captureLost: boolean
   captureTarget: SVGGElement
 }
 
@@ -119,6 +118,8 @@ function chartLayoutSignature(
   timelinePlan: PlanState,
   viewportWidth: number,
   viewMode: GanttViewName,
+  previewLocked: boolean,
+  recoveryEpoch: number,
 ): string {
   return JSON.stringify({
     rows: tasks.map((task) => ({
@@ -131,6 +132,8 @@ function chartLayoutSignature(
       bounds: projectTimelineBounds(timelinePlan, viewMode),
       sizing: timelineSizing(timelinePlan, viewMode, viewportWidth),
     },
+    previewLocked,
+    recoveryEpoch,
   })
 }
 
@@ -250,6 +253,7 @@ export function GanttChart({
   const renderedTasksRef = useRef(new Map<string, GanttTaskSnapshot>())
   const renderedDataSignatureRef = useRef<string | null>(null)
   const latestTasksRef = useRef<GanttTask[]>([])
+  const latestRenderedPlanRef = useRef(plan)
   const latestTimelinePlanRef = useRef(plan)
   const latestDataSignatureRef = useRef('')
   const latestAffectedPublicIdsRef = useRef(affectedPublicIds)
@@ -272,6 +276,7 @@ export function GanttChart({
   const onTaskSelectRef = useRef(onTaskSelect)
   const onDirectEditRef = useRef(onDirectEdit)
   const [viewportWidth, setViewportWidth] = useState(0)
+  const [recoveryEpoch, setRecoveryEpoch] = useState(0)
 
   interactionDisabledRef.current = interactionDisabled
   interactionBusyRef.current = interactionBusy
@@ -296,7 +301,10 @@ export function GanttChart({
     timelinePlan,
     viewportWidth,
     viewMode,
+    Boolean(preview),
+    recoveryEpoch,
   )
+  latestRenderedPlanRef.current = plan
   latestTimelinePlanRef.current = timelinePlan
   latestDataSignatureRef.current = dataSignature
   latestAffectedPublicIdsRef.current = affectedPublicIds
@@ -397,6 +405,7 @@ export function GanttChart({
       view_modes: ganttViewModes(
         latestTimelinePlanRef.current,
         latestViewportWidthRef.current,
+        latestRenderedPlanRef.current,
       ),
       scroll_to: taskBounds?.start || 'start',
       today_button: false,
@@ -457,7 +466,6 @@ export function GanttChart({
         maximumMovement: 0,
         target: hit.target,
         crossedThreshold: false,
-        captureLost: false,
         captureTarget: hit.wrapper,
       }
     }
@@ -466,29 +474,15 @@ export function GanttChart({
       if (!session || session.pointerId !== event.pointerId) return
       updateGestureMovement(session, event)
     }
-    const scheduleGestureRecovery = (taskPublicId: string) => {
+    const scheduleGestureRecovery = () => {
       if (gestureRecoveryFrameRef.current !== null) {
         window.cancelAnimationFrame(gestureRecoveryFrameRef.current)
       }
       gestureRecoveryFrameRef.current = window.requestAnimationFrame(() => {
         gestureRecoveryFrameRef.current = null
-        if (
-          pendingDatesRef.current?.taskPublicId === taskPublicId ||
-          directEditPendingRef.current || previewRef.current
-        ) return
-        const currentChart = chartRef.current
-        const currentContainer = containerRef.current
-        const authoritativeTask = latestTasksRef.current.find(
-          (candidate) => candidate.id === taskPublicId,
-        )
-        if (currentChart && currentContainer && authoritativeTask) {
-          reconcileGanttTasks(
-            currentChart,
-            currentContainer,
-            [authoritativeTask],
-          )
-          schedulePreviewOverlay(currentContainer)
-        }
+        if (!mountedRef.current) return
+        pendingDatesRef.current = null
+        setRecoveryEpoch((current) => current + 1)
       })
     }
     const completeGesture = (
@@ -502,7 +496,7 @@ export function GanttChart({
       }
       gestureSessionRef.current = null
       if (releaseCapture) releaseGestureCapture(session)
-      if (recoverGeometry) scheduleGestureRecovery(session.taskPublicId)
+      if (recoverGeometry) scheduleGestureRecovery()
     }
     const finishGesture = (event: PointerEvent) => {
       const session = gestureSessionRef.current
@@ -528,7 +522,12 @@ export function GanttChart({
     const loseGestureCapture = (event: PointerEvent) => {
       const session = gestureSessionRef.current
       if (!session || session.pointerId !== event.pointerId) return
-      session.captureLost = true
+      completeGesture(
+        session,
+        session.target === 'right-resize' || session.crossedThreshold,
+        false,
+        true,
+      )
     }
     const suppressGestureClick = (event: MouseEvent) => {
       const hit = ganttGestureHit(container, event.target)

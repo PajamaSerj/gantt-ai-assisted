@@ -78,4 +78,25 @@ describe('Gantt timeline presentation', () => {
     expect(sizing.timelineWidth).toBeGreaterThan(1200)
     expect(sizing.scrollable).toBe(true)
   })
+
+  it('extends padding from rendered tasks through a far proposed range', () => {
+    const { current } = makeSergeyPendingScenario()
+    const proposed = {
+      tasks: current.tasks.map((task, index) => {
+        if (index === 5) {
+          return { ...task, start_date: '2026-03-12', end_date: '2026-03-23' }
+        }
+        if (index === 6) {
+          return { ...task, start_date: '2026-03-24', end_date: '2026-03-25' }
+        }
+        return task
+      }),
+    }
+    const timelinePlan = { tasks: [...current.tasks, ...proposed.tasks] }
+    const week = ganttViewModes(timelinePlan, 454, current).find(
+      (mode) => mode.name === 'Week',
+    )
+
+    expect(week?.padding).toEqual(['7d', '27d'])
+  })
 })

@@ -410,6 +410,7 @@ describe('interactive Gantt integration', () => {
   it('recovers a crossed gesture after lost pointer capture', async () => {
     const chart = renderChart()
     const task = taskPart(chart.container, 'TASK-001')
+    const constructorCount = ganttMock.constructorCount
 
     fireEvent.pointerDown(task, {
       pointerId: 7,
@@ -442,9 +443,7 @@ describe('interactive Gantt integration', () => {
 
     expect(chart.props.onDirectEdit).not.toHaveBeenCalled()
     expect(chart.props.onTaskSelect).not.toHaveBeenCalled()
-    expect(ganttMock.updateCalls.some(
-      (call) => call.id === 'TASK-001',
-    )).toBe(true)
+    expect(ganttMock.constructorCount).toBe(constructorCount + 1)
 
     pointerGesture(task, { x: 100, y: 110 }, undefined, 8)
     fireEvent.click(task)

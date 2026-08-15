@@ -103,6 +103,21 @@ export async function rightHandleBox(page: Page, taskPublicId: string) {
   return box
 }
 
+export async function placeTaskNearLeftEdge(
+  page: Page,
+  taskPublicId: string,
+) {
+  await page.locator('.gantt-container').evaluate((scroller, taskId) => {
+    const bar = scroller.querySelector<SVGRectElement>(
+      `.bar-wrapper[data-id="${taskId}"] .bar`,
+    )
+    scroller.scrollLeft = Math.max(0, Number(bar?.getAttribute('x')) - 30)
+  }, taskPublicId)
+  await expect(page.locator(
+    `.bar-wrapper[data-id="${taskPublicId}"] .bar`,
+  )).toBeVisible()
+}
+
 async function dragFromBox(
   page: Page,
   box: { x: number; y: number; width: number; height: number },
