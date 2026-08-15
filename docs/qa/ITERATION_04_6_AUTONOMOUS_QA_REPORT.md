@@ -6,9 +6,31 @@
 
 - Windows, Chromium (Playwright 1.62.1), Node.js 24.15.0, Python 3.12.13.
 - Viewport matrix: 1440×900, 1920×1080, 1024×768 и incident viewport 454×866.
-- Playwright: 17/17 сценариев прошли. Покрыты click/micro-drag, drag/resize, Apply/Cancel, invalid dependency drag, far-edge preview/Apply, edge/pointer/request recovery, 21-операционный stress, persistence/Restore, AI drawer/help, Excel round-trip и SVG geometry.
+- Playwright: 19/19 сценариев прошли. Покрыты click/micro-drag, drag/resize, Apply/Cancel, invalid dependency drag, far-edge preview/Apply, edge/pointer/request recovery, no-op response guards, 21-операционный stress, persistence/Restore, AI drawer/help, Excel round-trip и SVG geometry.
 - Core interaction/stress: три последовательных прогона, 12/12 тестов прошли. Каждый повтор включает 21-операционный stress со сменой drag/resize/Apply/Cancel и выходом за обе границы timeline.
 - Визуально проверены baseline, AI drawer и same-row Change Preview во всех обязательных размерах, а также исправленные far-edge preview и applied chart на 454×866. Видео не создавалось; диагностические screenshots/traces сохранены только во временных игнорируемых каталогах.
+
+## Rework 01 — no-op ChangeSet guard
+
+### Воспроизведение и root cause
+
+- Воспроизведён утверждённый сценарий: `Перенеси задачу 4 на 11 февраля.`. Детерминированный Finish-to-Start propagation возвращал TASK-004 на уже существующую дату, но `prepare_changeset()` сохранял dependency impact и классифицировал результат как `CONFIRMATION_REQUIRED`, хотя итоговый `proposed_plan` полностью совпадал с authoritative plan.
+- Chat orchestration, direct edit и Excel import доверяли статусу подготовленного ChangeSet и не применяли единый post-build guard к полному `PlanState`. Frontend также доверял `confirmation_required`, строил preview с пустым списком изменений и мог показать pending-панель `0 задач`, заблокировав chat/Gantt/Excel до Apply/Cancel.
+- До исправления целевые regression-наборы зафиксировали 7 backend failures, 5 frontend failures и 1 Playwright failure. В ходе цикла дополнительно обнаружен эквивалентный direct-edit no-op: запрошенная weekend-дата нормализуется в уже существующую дату задачи.
+
+### Исправление
+
+- В domain добавлен один канонический post-build guard: ChangeSet имеет эффект только когда полный `proposed_plan` существует и не равен исходному `PlanState`. Сравнение включает все поля и порядок задач; apply-time digest/rebuild validation не менялись.
+- Guard подключён во всех producer/consumer paths текущего продукта: chat, direct drag/resize и Excel import. No-op не сохраняется в pending state, не вызывает `apply_changes`, не открывает confirmation и возвращает неизменённый authoritative plan.
+- Chat возвращает deterministic `clarification_required` с понятным сообщением. Direct edit использует существующий informational/invalid transport без изменения drag/resize UX. Import возвращает `NO_CHANGE`, не меняя workbook/Excel-контракт.
+- Frontend повторно валидирует любой входящий confirmation result: необходим `proposed_plan`, полное состояние должно отличаться, а derived preview должен содержать хотя бы одно эффективное изменение. Та же защита очищает persisted zero-effect pending state; `PendingPanel` физически не рендерит пустой preview.
+- Добавлены regression-тесты для точного chat-сценария, spy на отсутствие apply, same-value start/duration/assignee, mixed effective batch, complete-plan comparison, direct move/resize/weekend normalization, identical import result, malformed backend responses, persisted pending и реального UI continuation после no-op.
+
+### Автономная визуальная проверка rework
+
+- Отдельная in-app Browser QA-сессия на 1280×720 подтвердила отсутствие pending heading и текста `0 задач`, отсутствие page-level horizontal overflow (`scrollWidth == clientWidth == 1280`), 7 видимых bars и 7 правых resize handles с `pointer-events: auto`; console warnings/errors отсутствовали.
+- Локальный live AI provider не настроен, поэтому прямой `/api/chat` корректно показал существующую ошибку конфигурации без pending state. Утверждённый no-op ответ проверен в реальном UI через детерминированный Playwright route interception, как и остальные AI-сценарии Iteration 04.6.
+- После no-op chat остаётся доступным, TASK-004 не меняется, а последующий direct drag продолжает штатный confirmation flow. Видео не записывалось; screenshots/traces создавались только для разбора падавших прогонов.
 
 ## Воспроизведённые дефекты и причины
 
@@ -54,15 +76,15 @@
 
 ## Итоговые проверки
 
-- Frontend unit/integration: 83/83.
+- Frontend unit/integration: 91/91.
 - Frontend lint: passed.
 - TypeScript + production build: passed.
-- Backend: 123/123.
+- Backend: 133/133.
 - Python dependency check: passed.
 - Frontend dependency tree: passed (`npm ls --all`; отсутствуют broken required dependencies).
-- Frontend Playwright: 17/17; incident subset: 3/3; трёхкратный core repeat: 12/12.
+- Frontend Playwright: 19/19; no-op subset: 2/2; incident subset: 3/3; трёхкратный core repeat: 12/12.
 - Неожиданные `pageerror`, console errors и application request failures: отсутствуют во всех прошедших E2E сценариях.
-- Live Qwen не запускался: `/api/chat` перехватывался валидным детерминированным ответом согласно iteration brief. Это не блокер стандартного QA.
+- Live Qwen не запускался: обязательный AI happy path перехватывался валидным детерминированным ответом согласно iteration brief; локальная конфигурация provider отсутствует. Это не блокер стандартного QA.
 
 ## Готовность
 

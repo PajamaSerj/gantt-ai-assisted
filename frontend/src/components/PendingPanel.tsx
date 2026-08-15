@@ -48,6 +48,8 @@ export function PendingPanel({
   onApply,
   onCancel,
 }: PendingPanelProps) {
+  if (!preview || preview.changes.length === 0) return null
+
   const changeset = pending.changeset
   const canApply = pending.availableOptions.includes('apply_all')
   const canCancel = pending.availableOptions.includes('cancel')
@@ -60,28 +62,24 @@ export function PendingPanel({
           <h2 id="pending-title">Изменения ещё не применены</h2>
         </div>
         <span className="pending-count">
-          {preview?.changes.length ?? changeset.affected_tasks.length} задач
+          {preview.changes.length} задач
         </span>
       </div>
-      <p>{preview
-        ? pendingPreviewSummary(preview)
-        : 'Изменения подготовлены к подтверждению.'}</p>
+      <p>{pendingPreviewSummary(preview)}</p>
 
-      {preview && preview.changes.length > 0 && (
-        <div className="pending-change-list">
-          {preview.changes.map((change) => (
-            <article key={change.internalId}>
-              <strong>
-                {compactTaskReference(change.publicId)} · {change.name}
-              </strong>
-              <span>{changeDates(change)}</span>
-              <small className={`change-source ${change.source}`}>
-                {changeReason(change)}
-              </small>
-            </article>
-          ))}
-        </div>
-      )}
+      <div className="pending-change-list">
+        {preview.changes.map((change) => (
+          <article key={change.internalId}>
+            <strong>
+              {compactTaskReference(change.publicId)} · {change.name}
+            </strong>
+            <span>{changeDates(change)}</span>
+            <small className={`change-source ${change.source}`}>
+              {changeReason(change)}
+            </small>
+          </article>
+        ))}
+      </div>
 
       {changeset.date_normalizations.map((normalization) => (
         <p className="normalization" key={`${normalization.context}-${normalization.requested_date}`}>
@@ -93,7 +91,7 @@ export function PendingPanel({
       {changeset.confirmation_reasons.map((reason, index) => {
         const assignees = reason.code === 'NEW_ASSIGNEE'
           ? [...new Set(
-              preview?.proposedPlan.tasks
+              preview.proposedPlan.tasks
                 .filter((task) => reason.task_public_ids.includes(task.public_id))
                 .map((task) => task.assignee)
                 .filter((assignee): assignee is string => Boolean(assignee)),

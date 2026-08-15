@@ -9,6 +9,7 @@ from app.domain.changesets import (
     ChangeSet,
     ChangeSetStatus,
     apply_changeset,
+    changeset_has_effect,
     prepare_changeset,
 )
 from app.domain.ids import next_public_id, public_ids_for_replace
@@ -27,6 +28,7 @@ __all__ = [
     "Task",
     "UnknownPredecessorError",
     "apply_changeset",
+    "changeset_has_effect",
     "next_public_id",
     "public_ids_for_replace",
     "prepare_changeset",

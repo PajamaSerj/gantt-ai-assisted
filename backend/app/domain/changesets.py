@@ -204,6 +204,13 @@ def plan_digest(plan: PlanState) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def changeset_has_effect(changeset: ChangeSet, source_plan: PlanState) -> bool:
+    """Compare the complete deterministic final plan with its source snapshot."""
+    if changeset.proposed_plan is None:
+        raise InvalidChangeSetError("ChangeSet has no proposed PlanState")
+    return changeset.proposed_plan != source_plan
+
+
 def _validated_task_update(task: Task, **updates: object) -> Task:
     data = task.model_dump()
     data.update(updates)

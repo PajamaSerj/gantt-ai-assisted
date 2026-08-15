@@ -8,6 +8,7 @@ from app.domain.changesets import (
     ChangeSet,
     ChangeSetStatus,
     ReplacePlanChange,
+    changeset_has_effect,
     prepare_changeset,
 )
 from app.domain.errors import DependencyCycleError, DomainValidationError
@@ -33,7 +34,8 @@ class ImportPreparation:
     def status(self) -> str:
         if self.issues:
             return "VALIDATION_FAILED"
-        assert self.changeset is not None
+        if self.changeset is None:
+            return "NO_CHANGE"
         return self.changeset.status.value
 
 
@@ -214,4 +216,6 @@ def prepare_import(
                 for conflict in changeset.conflicts
             ),
         )
+    if not changeset_has_effect(changeset, current_plan):
+        return ImportPreparation(current_plan, None, ())
     return ImportPreparation(current_plan, changeset, ())

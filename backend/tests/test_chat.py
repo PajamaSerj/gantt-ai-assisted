@@ -3,10 +3,12 @@ import json
 from copy import deepcopy
 
 import httpx
+import pytest
 
 from app.ai.models import ChatRequest
 from app.ai.provider import AIProviderError, ProviderToolCall, ProviderTurn
 from app.main import app
+from app.mcp.client import PlanningMCPClient
 from app.seed.data import get_seed_plan
 from app.services.chat import CAPABILITY_MESSAGE, orchestrate_chat
 
@@ -208,6 +210,132 @@ def test_move_success_message_uses_deterministic_workday_and_dates() -> None:
     assert first.message == (
         "Задача 7 перенесена на 1 рабочий день вперёд. "
         "Новые даты: 2–3 марта."
+    )
+
+
+def test_dependency_bound_move_returns_noop_explanation_without_apply(
+    monkeypatch,
+) -> None:
+    source = get_seed_plan()
+    provider = ScriptedProvider(
+        tool_turn(
+            "move",
+            "move_tasks",
+            {"identifiers": ["TASK-004"], "shift_workdays": -1},
+        ),
+        final_turn("Модель не должна объяснять deterministic no-op."),
+    )
+    tool_calls: list[str] = []
+    original_call_tool = PlanningMCPClient.call_tool
+
+    async def tracked_call_tool(self, name, arguments=None):
+        tool_calls.append(name)
+        return await original_call_tool(self, name, arguments)
+
+    monkeypatch.setattr(PlanningMCPClient, "call_tool", tracked_call_tool)
+
+    response = run_chat(
+        provider,
+        "Перенеси задачу Елены на день назад",
+        plan=source,
+    )
+
+    assert response.status == "clarification_required"
+    assert response.plan == source
+    assert response.pending_changeset is None
+    assert response.available_options == ()
+    assert "Задачу 4" in response.message
+    assert "TASK-002 · UX-дизайн" in response.message
+    assert "11 февраля" in response.message
+    assert "apply_changes" not in tool_calls
+    assert response.conversation_context[-1].content == response.message
+
+
+def test_move_to_existing_start_date_returns_noop_without_pending() -> None:
+    source = get_seed_plan()
+    response = run_chat(
+        ScriptedProvider(
+            tool_turn(
+                "move",
+                "move_tasks",
+                {"identifiers": ["TASK-004"], "start_date": "2026-02-11"},
+            ),
+            final_turn(),
+        ),
+        "Оставь TASK-004 на 11 февраля",
+        plan=source,
+    )
+
+    assert response.status == "clarification_required"
+    assert response.plan == source
+    assert response.pending_changeset is None
+    assert response.available_options == ()
+    assert response.message == "Задача 4 уже начинается 11 февраля."
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "message_fragment"),
+    (
+        (
+            "set_assignee",
+            {"identifiers": ["TASK-001"], "assignee": "Анна"},
+            "Исполнитель «Анна» уже назначен задаче 1.",
+        ),
+        (
+            "update_task",
+            {"identifier": "TASK-001", "duration_workdays": 3},
+            "Длительность задачи 1 уже составляет 3 рабочих дня.",
+        ),
+    ),
+)
+def test_current_field_value_returns_noop_without_pending(
+    tool_name: str,
+    arguments: dict,
+    message_fragment: str,
+) -> None:
+    source = get_seed_plan()
+    response = run_chat(
+        ScriptedProvider(
+            tool_turn("same-value", tool_name, arguments),
+            final_turn(),
+        ),
+        "Установи уже текущее значение",
+        plan=source,
+    )
+
+    assert response.status == "clarification_required"
+    assert response.plan == source
+    assert response.pending_changeset is None
+    assert response.available_options == ()
+    assert response.message == message_fragment
+
+
+def test_mixed_batch_with_one_effective_change_keeps_normal_confirmation() -> None:
+    source = get_seed_plan()
+    response = run_chat(
+        ScriptedProvider(
+            tool_turn(
+                "noop-move",
+                "move_tasks",
+                {"identifiers": ["TASK-004"], "shift_workdays": -1},
+            ),
+            tool_turn(
+                "effective-update",
+                "update_task",
+                {"identifier": "TASK-001", "description": "Новая проверка"},
+            ),
+            final_turn(),
+        ),
+        "Перенеси задачу Елены назад и обнови описание TASK-001",
+        plan=source,
+    )
+
+    assert response.status == "confirmation_required"
+    assert response.plan == source
+    assert response.pending_changeset is not None
+    assert response.pending_changeset.proposed_plan != source
+    assert response.pending_changeset.proposed_plan.tasks[0].description == (
+        "Новая проверка"
     )
 
 

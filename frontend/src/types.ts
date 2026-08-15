@@ -118,7 +118,11 @@ export type ImportIssue = {
 }
 
 export type ImportResponse = {
-  status: 'AUTO_APPLICABLE' | 'CONFIRMATION_REQUIRED' | 'VALIDATION_FAILED'
+  status:
+    | 'AUTO_APPLICABLE'
+    | 'CONFIRMATION_REQUIRED'
+    | 'VALIDATION_FAILED'
+    | 'NO_CHANGE'
   unchanged_plan: PlanState
   changeset: ChangeSet | null
   errors: ImportIssue[]

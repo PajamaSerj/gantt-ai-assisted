@@ -124,6 +124,46 @@ def test_dependency_bound_noop_move_returns_concise_message_without_pending(
     )
 
 
+def test_direct_move_to_existing_date_is_not_applied_as_a_change() -> None:
+    source = get_seed_plan()
+    response = asyncio.run(
+        post_direct(
+            {
+                "type": "move",
+                "task_id": task_id(4),
+                "intended_start_date": "2026-02-11",
+            },
+            source,
+        )
+    )
+
+    body = response.json()
+    assert body["status"] == "INVALID"
+    assert body["plan"] == source.model_dump(mode="json")
+    assert body["changeset"] is None
+    assert body["message"] == "Задача уже начинается 11 февраля."
+
+
+def test_direct_resize_to_existing_duration_is_not_applied_as_a_change() -> None:
+    source = get_seed_plan()
+    response = asyncio.run(
+        post_direct(
+            {
+                "type": "resize",
+                "task_id": task_id(7),
+                "intended_end_date": "2026-03-02",
+            },
+            source,
+        )
+    )
+
+    body = response.json()
+    assert body["status"] == "INVALID"
+    assert body["plan"] == source.model_dump(mode="json")
+    assert body["changeset"] is None
+    assert body["message"] == "Длительность задачи уже составляет 2 рабочих дня."
+
+
 def test_weekend_direct_move_uses_existing_normalization_confirmation() -> None:
     response = asyncio.run(
         post_direct(
@@ -148,7 +188,7 @@ def test_weekend_direct_move_uses_existing_normalization_confirmation() -> None:
     ]
 
 
-def test_explicit_weekend_noop_keeps_existing_normalization_confirmation() -> None:
+def test_weekend_normalization_to_existing_date_returns_noop() -> None:
     plan = get_seed_plan()
     tasks = list(plan.tasks)
     tasks[5] = tasks[5].model_copy(
@@ -174,15 +214,10 @@ def test_explicit_weekend_noop_keeps_existing_normalization_confirmation() -> No
     )
 
     body = response.json()
-    assert body["status"] == "CONFIRMATION_REQUIRED"
-    assert body["changeset"]["date_normalizations"] == [
-        {
-            "context": "task_move",
-            "requested_date": "2026-03-01",
-            "normalized_date": "2026-03-02",
-            "task_public_id": "TASK-007",
-        }
-    ]
+    assert body["status"] == "INVALID"
+    assert body["changeset"] is None
+    assert body["plan"] == current_plan.model_dump(mode="json")
+    assert body["message"] == "Задача уже начинается 2 марта."
 
 
 def test_safe_right_resize_converts_visual_end_to_working_day_duration(

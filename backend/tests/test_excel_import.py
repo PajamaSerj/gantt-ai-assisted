@@ -4,7 +4,12 @@ from io import BytesIO
 import pytest
 from openpyxl import Workbook
 
-from app.domain.changesets import ChangeSetStatus, apply_changeset
+from app.domain.changesets import (
+    ChangeSet,
+    ChangeSetStatus,
+    apply_changeset,
+    plan_digest,
+)
 from app.domain.errors import InvalidChangeSetError
 from app.domain.models import PlanState
 from app.seed.data import get_seed_plan
@@ -333,6 +338,38 @@ def test_weekend_import_date_is_normalized_with_preview() -> None:
     assert preparation.changeset.proposed_plan.tasks[0].start_date == date(
         2026, 8, 24
     )
+
+
+def test_import_with_identical_final_plan_returns_no_change(
+    monkeypatch,
+) -> None:
+    current = get_seed_plan()
+
+    def identical_changeset(source_plan, requested_changes):
+        return ChangeSet(
+            source_plan_digest=plan_digest(source_plan),
+            requested_changes=tuple(requested_changes),
+            status=ChangeSetStatus.CONFIRMATION_REQUIRED,
+            proposed_plan=source_plan,
+        )
+
+    monkeypatch.setattr(
+        "app.services.import_planning.prepare_changeset",
+        identical_changeset,
+    )
+
+    preparation = prepare_import(
+        file_name="tasks.xlsx",
+        content=workbook_bytes([("A", None, None, 1, None)]),
+        mode=ImportMode.REPLACE,
+        date_constraint=date(2026, 8, 17),
+        current_plan=current,
+    )
+
+    assert preparation.status == "NO_CHANGE"
+    assert preparation.unchanged_plan == current
+    assert preparation.changeset is None
+    assert preparation.issues == ()
 
 
 def test_replace_changeset_rejects_changed_current_snapshot() -> None:

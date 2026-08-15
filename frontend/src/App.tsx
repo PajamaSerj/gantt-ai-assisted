@@ -16,8 +16,9 @@ import { ImportDialog } from './components/ImportDialog'
 import { PendingPanel } from './components/PendingPanel'
 import { TaskModal } from './components/TaskModal'
 import { buildPendingPlanPreview } from './pending-preview'
-import { loadPlannerState, persistPlannerState } from './storage'
+import { loadPlannerState, persistPlannerState, STORAGE_KEY } from './storage'
 import type {
+  ChangeSet,
   ChatResponse,
   DirectEditIntent,
   ImportIssue,
@@ -34,27 +35,60 @@ const EMPTY_STATE: PlannerState = {
 
 const IMPORT_CONFIRMATION_OPTIONS = ['apply_all', 'cancel']
 const SUCCESS_NOTICE_DURATION_MS = 5_000
-
-function initialState(): PlannerState {
-  if (typeof window === 'undefined') return EMPTY_STATE
-  return loadPlannerState(window.localStorage) || EMPTY_STATE
-}
-
-function pendingFromResponse(response: ChatResponse): PendingChange | null {
-  const pendingChange =
-    response.status === 'confirmation_required' && response.pending_changeset
-      ? {
-          changeset: response.pending_changeset,
-          message: response.message,
-          availableOptions: response.available_options,
-          source: 'chat' as const,
-        }
-      : null
-  return pendingChange
-}
+const NO_EFFECT_NOTICE = 'Изменение не требуется: план уже содержит эти данные.'
 
 function planFingerprint(plan: PlannerState['plan']): string {
   return JSON.stringify(plan)
+}
+
+function effectivePendingPreview(plan: NonNullable<PlannerState['plan']>, changeset: ChangeSet) {
+  if (!changeset.proposed_plan) {
+    throw new Error('Backend не вернул proposed PlanState для подтверждения')
+  }
+  if (planFingerprint(changeset.proposed_plan) === planFingerprint(plan)) {
+    return null
+  }
+  const preview = buildPendingPlanPreview(plan, changeset)
+  if (!preview) {
+    throw new Error('Не удалось построить preview подготовленных изменений')
+  }
+  return preview.changes.length > 0 ? preview : null
+}
+
+function initialState(): PlannerState {
+  if (typeof window === 'undefined') return EMPTY_STATE
+  const restored = loadPlannerState(window.localStorage)
+  if (!restored?.plan || !restored.pendingChange) return restored || EMPTY_STATE
+  try {
+    return effectivePendingPreview(
+      restored.plan,
+      restored.pendingChange.changeset,
+    )
+      ? restored
+      : { ...restored, pendingChange: null }
+  } catch {
+    window.localStorage.removeItem(STORAGE_KEY)
+    return EMPTY_STATE
+  }
+}
+
+function pendingFromResponse(
+  response: ChatResponse,
+  currentPlan: NonNullable<PlannerState['plan']>,
+): PendingChange | null {
+  if (response.status !== 'confirmation_required') return null
+  if (!response.pending_changeset) {
+    throw new Error('Backend не вернул ChangeSet для подтверждения')
+  }
+  if (!effectivePendingPreview(currentPlan, response.pending_changeset)) {
+    return null
+  }
+  return {
+    changeset: response.pending_changeset,
+    message: response.message,
+    availableOptions: response.available_options,
+    source: 'chat',
+  }
 }
 
 function App() {
@@ -113,10 +147,14 @@ function App() {
 
   const pendingPreview = useMemo(() => {
     if (!planner.plan || !planner.pendingChange) return null
-    return buildPendingPlanPreview(
-      planner.plan,
-      planner.pendingChange.changeset,
-    )
+    try {
+      return effectivePendingPreview(
+        planner.plan,
+        planner.pendingChange.changeset,
+      )
+    } catch {
+      return null
+    }
   }, [planner.pendingChange, planner.plan])
 
   const affectedPublicIds = useMemo(() => {
@@ -167,6 +205,7 @@ function App() {
         requestContext,
       )
       if (chatRequestRef.current !== requestId) return
+      const responsePending = pendingFromResponse(response, requestedPlan)
       setPlanner((current) => {
         const requestIsCurrent =
           planFingerprint(current.plan) === requestedPlanFingerprint
@@ -188,7 +227,7 @@ function App() {
           conversationContext: response.conversation_context,
           pendingChange:
             response.status === 'confirmation_required'
-              ? pendingFromResponse(response)
+              ? responsePending
               : current.pendingChange,
         }
       })
@@ -243,8 +282,18 @@ function App() {
         setImportFile(null)
         return
       }
+      if (response.status === 'NO_CHANGE') {
+        setImportFile(null)
+        setNotice('План уже содержит эти данные.')
+        return
+      }
       if (!response.changeset) {
         throw new Error('Не удалось подготовить изменения для импорта')
+      }
+      if (!effectivePendingPreview(planner.plan, response.changeset)) {
+        setImportFile(null)
+        setNotice('План уже содержит эти данные.')
+        return
       }
       if (response.status === 'CONFIRMATION_REQUIRED') {
         const pending: PendingChange = {
@@ -342,6 +391,10 @@ function App() {
       if (response.status === 'CONFIRMATION_REQUIRED') {
         if (!response.changeset) {
           throw new Error('Backend не вернул подготовленный ChangeSet')
+        }
+        if (!effectivePendingPreview(requestedPlan, response.changeset)) {
+          setNotice(NO_EFFECT_NOTICE)
+          return
         }
         const pending: PendingChange = {
           changeset: response.changeset,

@@ -5,14 +5,17 @@ import { makeChangeSet, makePlan } from './test/fixtures'
 
 describe('planner storage', () => {
   it('round-trips plan, conversation, and pending confirmation', () => {
+    const plan = makePlan()
+    const proposed = structuredClone(plan)
+    proposed.tasks[0] = { ...proposed.tasks[0], name: 'Изменённая задача' }
     const state = {
-      plan: makePlan(),
+      plan,
       conversationContext: [
         { role: 'user' as const, content: 'Перенеси задачу' },
         { role: 'assistant' as const, content: 'Уточните дату' },
       ],
       pendingChange: {
-        changeset: makeChangeSet(),
+        changeset: makeChangeSet(proposed),
         message: 'Подтвердите',
         availableOptions: ['apply_all', 'cancel'],
         source: 'chat' as const,

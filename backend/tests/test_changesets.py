@@ -11,6 +11,7 @@ from app.domain.changesets import (
     SetDurationChange,
     SetPredecessorsChange,
     apply_changeset,
+    changeset_has_effect,
     prepare_changeset,
 )
 from app.domain.errors import InvalidChangeSetError
@@ -53,6 +54,41 @@ def test_auto_applicable_changeset_applies_without_confirmation(task_factory) ->
 
     assert applied.tasks[0].name == "Renamed"
     assert source.tasks[0].name == "A"
+
+
+def test_effect_detection_compares_complete_final_plan(task_factory) -> None:
+    first = task_factory(1, name="A")
+    second = task_factory(2, name="B")
+    source = scheduled_plan(task_factory, first, second)
+    no_effect = prepare_changeset(
+        source,
+        (RenameTaskChange(task_id=first.internal_id, name="A"),),
+    )
+    effective = prepare_changeset(
+        source,
+        (RenameTaskChange(task_id=first.internal_id, name="Renamed"),),
+    )
+    reordered = no_effect.model_copy(
+        update={
+            "proposed_plan": PlanState(tasks=tuple(reversed(source.tasks))),
+        }
+    )
+
+    assert changeset_has_effect(no_effect, source) is False
+    assert changeset_has_effect(effective, source) is True
+    assert changeset_has_effect(reordered, source) is True
+
+
+def test_effect_detection_rejects_missing_proposed_plan(task_factory) -> None:
+    task = task_factory(1, name="A")
+    source = scheduled_plan(task_factory, task)
+    invalid = prepare_changeset(
+        source,
+        (SetPredecessorsChange(task_id=task.internal_id, predecessor_ids=(task.internal_id,)),),
+    )
+
+    with pytest.raises(InvalidChangeSetError, match="no proposed PlanState"):
+        changeset_has_effect(invalid, source)
 
 
 def test_rename_rejects_reserved_excel_separator(task_factory) -> None:

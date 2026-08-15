@@ -9,12 +9,23 @@ from app.ai.models import (
     ConversationMessage,
 )
 from app.ai.provider import AIProvider, AIProviderError
-from app.domain.calendar import is_working_day
+from app.domain.calendar import (
+    is_working_day,
+    next_working_day,
+    normalize_to_working_day,
+)
 from app.domain.changesets import (
     ChangeSet,
     ChangeSetStatus,
     MoveTaskChange,
+    RenameTaskChange,
+    SetAssigneeChange,
+    SetDescriptionChange,
+    SetDurationChange,
+    SetPredecessorsChange,
+    changeset_has_effect,
 )
+from app.domain.graph import task_index
 from app.domain.models import PlanState
 from app.domain.validation import validate_plan_schedule
 from app.mcp.client import PlanningMCPClient
@@ -198,6 +209,75 @@ def _format_date_range(start_date: date, end_date: date) -> str:
     return result
 
 
+def _no_effect_message(changeset: ChangeSet, source_plan: PlanState) -> str:
+    indexed = task_index(source_plan.tasks)
+    for change in changeset.requested_changes:
+        task_id = getattr(change, "task_id", None)
+        task = indexed.get(task_id)
+        if task is None:
+            continue
+        task_reference = _compact_task_reference(task.public_id)
+
+        if isinstance(change, MoveTaskChange):
+            requested_start = normalize_to_working_day(change.start_date)
+            if task.predecessor_ids:
+                predecessor = max(
+                    (indexed[item] for item in task.predecessor_ids),
+                    key=lambda candidate: candidate.end_date,
+                )
+                earliest_start = next_working_day(predecessor.end_date)
+                if (
+                    requested_start < earliest_start
+                    and task.start_date == earliest_start
+                ):
+                    return (
+                        f"Задачу {task_reference} нельзя перенести раньше: она "
+                        "уже начинается в первый рабочий день после "
+                        f"{predecessor.public_id} · {predecessor.name} — "
+                        f"{_format_date_range(earliest_start, earliest_start)}."
+                    )
+            if requested_start == task.start_date:
+                return (
+                    f"Задача {task_reference} уже начинается "
+                    f"{_format_date_range(task.start_date, task.start_date)}."
+                )
+        elif (
+            isinstance(change, SetDurationChange)
+            and change.duration_workdays == task.duration_workdays
+        ):
+            return (
+                f"Длительность задачи {task_reference} уже составляет "
+                f"{_working_day_phrase(task.duration_workdays)}."
+            )
+        elif (
+            isinstance(change, SetAssigneeChange)
+            and change.assignee == task.assignee
+        ):
+            if task.assignee is None:
+                return f"У задачи {task_reference} уже нет назначенного исполнителя."
+            return (
+                f"Исполнитель «{task.assignee}» уже назначен "
+                f"задаче {task_reference}."
+            )
+        elif isinstance(change, RenameTaskChange) and change.name == task.name:
+            return f"Задача {task_reference} уже называется «{task.name}»."
+        elif (
+            isinstance(change, SetDescriptionChange)
+            and change.description == task.description
+        ):
+            return f"У задачи {task_reference} уже установлено указанное описание."
+        elif (
+            isinstance(change, SetPredecessorsChange)
+            and change.predecessor_ids == task.predecessor_ids
+        ):
+            return (
+                f"У задачи {task_reference} уже установлен указанный "
+                "набор предшественников."
+            )
+
+    return "Изменение не требуется: после проверки правил план остаётся без изменений."
+
+
 def _move_applied_message(
     changeset: ChangeSet,
     source_plan: PlanState,
@@ -351,6 +431,15 @@ async def orchestrate_chat(
             changeset = planning_context.prepare()
             if changeset.status is ChangeSetStatus.INVALID:
                 message = _conflict_message(changeset)
+                return ChatResponse(
+                    status=ChatStatus.CLARIFICATION_REQUIRED,
+                    message=message,
+                    plan=request.plan,
+                    conversation_context=_conversation_with_reply(request, message),
+                )
+
+            if not changeset_has_effect(changeset, request.plan):
+                message = _no_effect_message(changeset, request.plan)
                 return ChatResponse(
                     status=ChatStatus.CLARIFICATION_REQUIRED,
                     message=message,

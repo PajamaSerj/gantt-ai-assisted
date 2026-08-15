@@ -103,6 +103,31 @@ describe('Iteration 04 integration state', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('drops a persisted zero-effect pending state before rendering', () => {
+    const source = makePlan()
+    persistPlannerState(localStorage, {
+      plan: source,
+      conversationContext: [{
+        role: 'assistant',
+        content: 'План остаётся без изменений.',
+      }],
+      pendingChange: {
+        changeset: makeChangeSet(source),
+        message: 'Подтвердите',
+        availableOptions: ['apply_all', 'cancel'],
+        source: 'chat',
+      },
+    })
+    render(<App />)
+
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 задач')).not.toBeInTheDocument()
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-interaction-disabled',
+      'false',
+    )
+  })
+
   it('applies chat response and persists the returned plan with Russian text', async () => {
     const user = userEvent.setup()
     const source = makePlan()
@@ -169,7 +194,9 @@ describe('Iteration 04 integration state', () => {
   it('stores confirmation, blocks mutations, and cancels without an apply request', async () => {
     const user = userEvent.setup()
     const plan = makePlan()
-    const changeset = makeChangeSet(plan)
+    const proposed = structuredClone(plan)
+    proposed.tasks[0] = { ...proposed.tasks[0], name: 'Новое исследование' }
+    const changeset = makeChangeSet(proposed)
     stored(plan)
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({
@@ -198,6 +225,78 @@ describe('Iteration 04 integration state', () => {
     expect(screen.getByLabelText('Сообщение AI-помощнику')).toBeEnabled()
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(screen.getByText(/TASK-001 Исследование продукта/)).toBeInTheDocument()
+  })
+
+  it('rejects a zero-effect chat confirmation without locking the planner', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    const changeset = makeChangeSet(source)
+    stored(source)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'confirmation_required',
+        message: 'Изменение не требуется: план остаётся без изменений.',
+        plan: source,
+        conversation_context: [
+          { role: 'user', content: 'Перенеси задачу назад' },
+          {
+            role: 'assistant',
+            content: 'Изменение не требуется: план остаётся без изменений.',
+          },
+        ],
+        pending_changeset: changeset,
+        available_options: ['apply_all', 'cancel'],
+      }),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    await user.type(
+      screen.getByLabelText('Сообщение AI-помощнику'),
+      'Перенеси задачу назад',
+    )
+    await user.click(screen.getByRole('button', { name: /Отправить/ }))
+
+    expect(await screen.findByText(
+      'Изменение не требуется: план остаётся без изменений.',
+    )).toBeInTheDocument()
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 задач')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Применить всё' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Отменить' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Сообщение AI-помощнику')).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Excel' })).toBeEnabled()
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-interaction-disabled',
+      'false',
+    )
+  })
+
+  it('uses the handled error path when confirmation lacks a proposed plan', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    const changeset = makeChangeSet(source)
+    changeset.proposed_plan = null
+    stored(source)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'confirmation_required',
+        message: 'Подтвердите изменение.',
+        plan: source,
+        conversation_context: [],
+        pending_changeset: changeset,
+        available_options: ['apply_all', 'cancel'],
+      }),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'AI-помощник' }))
+    await user.type(screen.getByLabelText('Сообщение AI-помощнику'), 'Измени план')
+    await user.click(screen.getByRole('button', { name: /Отправить/ }))
+
+    expect(await screen.findByText(/Backend не вернул proposed PlanState/)).toBeInTheDocument()
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Сообщение AI-помощнику')).toBeEnabled()
   })
 
   it('applies pending ChangeSet through the backend endpoint', async () => {
@@ -316,6 +415,67 @@ describe('Iteration 04 integration state', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/api/import', '/api/import'])
+  })
+
+  it('surfaces an identical import as information without applying it', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    stored(source)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'NO_CHANGE',
+        unchanged_plan: source,
+        changeset: null,
+        errors: [],
+      }),
+    )
+    render(<App />)
+    const file = new File(['xlsx'], 'tasks.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    await user.click(screen.getByRole('button', { name: /Excel/ }))
+    await user.upload(screen.getByLabelText('Выбрать Excel для импорта'), file)
+    await user.click(screen.getByRole('button', { name: 'Проверить и импортировать' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'План уже содержит эти данные.',
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Excel' })).toBeEnabled()
+  })
+
+  it('rejects a zero-effect import confirmation before storing pending state', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    stored(source)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'CONFIRMATION_REQUIRED',
+        unchanged_plan: source,
+        changeset: makeChangeSet(source),
+        errors: [],
+      }),
+    )
+    render(<App />)
+    const file = new File(['xlsx'], 'tasks.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    await user.click(screen.getByRole('button', { name: /Excel/ }))
+    await user.upload(screen.getByLabelText('Выбрать Excel для импорта'), file)
+    await user.click(screen.getByRole('button', { name: 'Проверить и импортировать' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'План уже содержит эти данные.',
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-interaction-disabled',
+      'false',
+    )
   })
 
   it('keeps the current plan when provider error carries a stale plan', async () => {
@@ -714,6 +874,39 @@ describe('Iteration 04 integration state', () => {
       'data-active-task-2-start',
       source.tasks[1].start_date,
     )
+  })
+
+  it('rejects a zero-effect direct confirmation without locking the chart', async () => {
+    const user = userEvent.setup()
+    const source = makePlan()
+    const changeset = makeChangeSet(source)
+    stored(source)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        status: 'CONFIRMATION_REQUIRED',
+        plan: source,
+        changeset,
+        message: 'Проверьте последствия изменения перед применением.',
+      }),
+    )
+    render(<App />)
+
+    await user.click(screen.getByRole('button', {
+      name: 'Имитировать прямой перенос первой задачи',
+    }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Изменение не требуется: план уже содержит эти данные.',
+    )
+    expect(screen.queryByText('Изменения ещё не применены')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 задач')).not.toBeInTheDocument()
+    expect(screen.getByTestId('gantt-chart')).toHaveAttribute(
+      'data-interaction-disabled',
+      'false',
+    )
+    expect(screen.getByRole('button', {
+      name: 'Имитировать прямой перенос первой задачи',
+    })).toBeEnabled()
   })
 
   it('keeps active dates and reuses pending preview for an impacted drag', async () => {

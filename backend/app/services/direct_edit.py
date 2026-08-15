@@ -16,6 +16,37 @@ from app.domain.errors import ScheduleValidationError, UnknownTaskError
 from app.domain.graph import task_index
 from app.domain.models import PlanState
 
+_RUSSIAN_MONTHS = (
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
+
+
+def _format_date(value: date) -> str:
+    return f"{value.day} {_RUSSIAN_MONTHS[value.month - 1]}"
+
+
+def _working_days(value: int) -> str:
+    modulo_100 = value % 100
+    modulo_10 = value % 10
+    if modulo_10 == 1 and modulo_100 != 11:
+        noun = "рабочий день"
+    elif modulo_10 in {2, 3, 4} and modulo_100 not in {12, 13, 14}:
+        noun = "рабочих дня"
+    else:
+        noun = "рабочих дней"
+    return f"{value} {noun}"
+
 
 def prepare_direct_move(
     current_plan: PlanState,
@@ -50,6 +81,23 @@ def dependency_bound_move_message(
     return (
         "Задача не может начинаться раньше завершения "
         f"{predecessor.public_id} · {predecessor.name}."
+    )
+
+
+def current_start_message(current_plan: PlanState, task_id: UUID) -> str:
+    task = task_index(current_plan.tasks).get(task_id)
+    if task is None:
+        raise UnknownTaskError(task_id)
+    return f"Задача уже начинается {_format_date(task.start_date)}."
+
+
+def current_duration_message(current_plan: PlanState, task_id: UUID) -> str:
+    task = task_index(current_plan.tasks).get(task_id)
+    if task is None:
+        raise UnknownTaskError(task_id)
+    return (
+        "Длительность задачи уже составляет "
+        f"{_working_days(task.duration_workdays)}."
     )
 
 
