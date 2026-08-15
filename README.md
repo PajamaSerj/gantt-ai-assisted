@@ -3,7 +3,7 @@
 Deterministic planning-engine foundation for the AI Gantt Planner MVP described in
 `docs/AI_Gantt_Planner_Master_Brief_v1.3.md`.
 
-Implemented through Iteration 4:
+Implemented through Iteration 5.1:
 
 - a React + TypeScript + Vite application shell;
 - a stateless Python/FastAPI application with seed, import, apply, and export APIs;
@@ -30,12 +30,16 @@ Implemented through Iteration 4:
 - frontend unit/integration coverage for browser state and API contracts;
 - unit and API tests for this scope.
 
-Docker and deployment are explicitly deferred to later iterations.
+Iteration 5.1 adds a single production container that serves the built React
+application and the FastAPI API from one Uvicorn process. Yandex Cloud deployment
+remains planned for a later iteration; no cloud environment is created or changed
+by the local container workflow.
 
 ## Requirements
 
 - Node.js 20.19+ (Node.js 24 was used for this iteration)
 - Python 3.12+
+- Docker with a running daemon (only for the optional container build/smoke)
 
 ## Backend
 
@@ -119,6 +123,37 @@ Run the frontend tests:
 cd frontend
 npm run test
 ```
+
+## Production container
+
+The root multi-stage `Dockerfile` builds the Vite application, installs only
+Python runtime dependencies, and runs the combined application as a non-root
+user. Runtime configuration is supplied through environment variables; local
+`.env` files and build/test output are excluded from the image context.
+
+Build and run locally on the default port:
+
+```powershell
+docker build --tag ai-gantt-planner:local .
+docker run --rm --publish 8080:8080 --env PORT=8080 ai-gantt-planner:local
+```
+
+Then open `http://127.0.0.1:8080`. Both the UI and `/api/*` are served from that
+origin. To use another port, publish the same port passed to the container, for
+example `--publish 8090:8090 --env PORT=8090`.
+
+The repeatable PowerShell smoke builds the image, starts a temporary container,
+checks the UI, static assets, API routes, logs, and non-root runtime, and removes
+the container in a `finally` block:
+
+```powershell
+pwsh -File .\infra\docker\smoke.ps1
+```
+
+Optional parameters include `-ImageTag`, `-Port`, `-EnvFile`, `-SkipBuild`, and
+`-KeepContainer`. The baseline smoke does not require cloud credentials. If an
+environment file is supplied, keep it local; it is read only at container
+runtime and must not be committed.
 
 ## Excel input contract
 
