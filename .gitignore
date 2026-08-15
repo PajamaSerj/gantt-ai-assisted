@@ -10,6 +10,9 @@ backend/.venv/
 frontend/node_modules/
 frontend/dist/
 frontend/*.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
 
 # Environment and local tooling
 .env

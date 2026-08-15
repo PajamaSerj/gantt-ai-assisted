@@ -292,6 +292,7 @@ describe('interactive Gantt integration', () => {
 
     pointerGesture(task, { x: 100, y: 110 })
     fireEvent.click(task)
+    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
 
     expect(props.onTaskSelect).toHaveBeenCalledTimes(1)
     expect(props.onTaskSelect).toHaveBeenCalledWith(props.plan.tasks[0])
@@ -312,12 +313,14 @@ describe('interactive Gantt integration', () => {
 
     pointerGesture(task, { x: 100, y: 110 }, { x: 104, y: 110 })
     fireEvent.click(task)
+    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
 
     expect(props.onDirectEdit).not.toHaveBeenCalled()
     expect(props.onTaskSelect).not.toHaveBeenCalled()
 
     pointerGesture(task, { x: 100, y: 110 })
     fireEvent.click(task)
+    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
 
     expect(props.onTaskSelect).toHaveBeenCalledTimes(1)
     expect(props.onTaskSelect).toHaveBeenCalledWith(props.plan.tasks[0])
@@ -352,7 +355,100 @@ describe('interactive Gantt integration', () => {
 
     pointerGesture(task, { x: 100, y: 110 }, undefined, 2)
     fireEvent.click(task)
+    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
 
+    expect(chart.props.onTaskSelect).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves gesture suppression through preview and Apply', async () => {
+    const { current, proposed, changeset } = makeSergeyPendingScenario()
+    const preview = buildPendingPlanPreview(current, changeset)
+    if (!preview) throw new Error('Expected pending preview')
+    const chart = renderChart({ plan: current })
+    const task = taskPart(chart.container, 'TASK-003')
+
+    pointerGesture(task, { x: 100, y: 110 }, { x: 112, y: 110 })
+
+    chart.rerender(<GanttChart
+      {...chart.props}
+      plan={current}
+      preview={preview}
+      interactionDisabled
+    />)
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30))
+    })
+    act(() => ganttMock.options?.on_click?.(
+      ganttMock.tasks.find((candidate) => candidate.id === 'TASK-003')!,
+    ))
+    expect(chart.props.onTaskSelect).not.toHaveBeenCalled()
+
+    chart.rerender(<GanttChart
+      {...chart.props}
+      plan={proposed}
+      preview={null}
+      interactionDisabled={false}
+    />)
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30))
+    })
+    act(() => ganttMock.options?.on_click?.(
+      ganttMock.tasks.find((candidate) => candidate.id === 'TASK-003')!,
+    ))
+    expect(chart.props.onTaskSelect).not.toHaveBeenCalled()
+
+    const appliedTask = taskPart(chart.container, 'TASK-003')
+    pointerGesture(appliedTask, { x: 100, y: 110 }, undefined, 2)
+    fireEvent.click(appliedTask)
+    act(() => ganttMock.options?.on_click?.(
+      ganttMock.tasks.find((candidate) => candidate.id === 'TASK-003')!,
+    ))
+    expect(chart.props.onTaskSelect).toHaveBeenCalledTimes(1)
+    expect(chart.props.onTaskSelect).toHaveBeenCalledWith(proposed.tasks[2])
+  })
+
+  it('recovers a crossed gesture after lost pointer capture', async () => {
+    const chart = renderChart()
+    const task = taskPart(chart.container, 'TASK-001')
+
+    fireEvent.pointerDown(task, {
+      pointerId: 7,
+      button: 0,
+      isPrimary: true,
+      clientX: 100,
+      clientY: 110,
+    })
+    fireEvent.pointerMove(document, {
+      pointerId: 7,
+      isPrimary: true,
+      clientX: 112,
+      clientY: 110,
+    })
+    fireEvent(task, new PointerEvent('lostpointercapture', {
+      pointerId: 7,
+      isPrimary: true,
+    }))
+    fireEvent.pointerUp(document, {
+      pointerId: 7,
+      button: 0,
+      isPrimary: true,
+      clientX: 112,
+      clientY: 110,
+    })
+    fireEvent.click(task)
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30))
+    })
+
+    expect(chart.props.onDirectEdit).not.toHaveBeenCalled()
+    expect(chart.props.onTaskSelect).not.toHaveBeenCalled()
+    expect(ganttMock.updateCalls.some(
+      (call) => call.id === 'TASK-001',
+    )).toBe(true)
+
+    pointerGesture(task, { x: 100, y: 110 }, undefined, 8)
+    fireEvent.click(task)
+    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
     expect(chart.props.onTaskSelect).toHaveBeenCalledTimes(1)
   })
 
@@ -362,6 +458,7 @@ describe('interactive Gantt integration', () => {
 
     pointerGesture(rightHandle, { x: 160, y: 110 })
     fireEvent.click(rightHandle)
+    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
 
     expect(props.onDirectEdit).not.toHaveBeenCalled()
     expect(props.onTaskSelect).not.toHaveBeenCalled()
@@ -835,6 +932,7 @@ describe('interactive Gantt integration', () => {
     const task = taskPart(chart.container, 'TASK-001')
     pointerGesture(task, { x: 100, y: 110 }, { x: 112, y: 110 })
     fireEvent.click(task)
+    act(() => ganttMock.options?.on_click?.(ganttMock.tasks[0]))
 
     expect(ganttMock.options?.readonly).toBe(true)
     expect(ganttMock.options?.readonly_dates).toBe(true)

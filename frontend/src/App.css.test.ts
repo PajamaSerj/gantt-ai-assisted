@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest'
 import appStyles from './App.css?raw'
 
 describe('planner layout CSS contract', () => {
+  it('contains drawer animation without disabling Gantt horizontal scrolling', () => {
+    expect(appStyles).toMatch(/\.app-shell\s*\{[^}]*overflow-x:\s*clip/s)
+    expect(appStyles).toMatch(
+      /\.gantt-host \.gantt-container\s*\{[^}]*overflow-x:\s*auto/s,
+    )
+  })
+
   it('does not force populated Gantt height from the viewport', () => {
     expect(appStyles).not.toContain('calc(100vh - 230px)')
     expect(appStyles).not.toMatch(/\.gantt-host\s*\{[^}]*min-height/s)

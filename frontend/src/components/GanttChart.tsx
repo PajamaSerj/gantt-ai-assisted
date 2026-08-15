@@ -61,6 +61,7 @@ type GanttGestureSession = {
   maximumMovement: number
   target: GanttGestureTarget
   crossedThreshold: boolean
+  captureLost: boolean
   captureTarget: SVGGElement
 }
 
@@ -204,12 +205,16 @@ function ganttGestureHit(
 }
 
 function releaseGestureCapture(session: GanttGestureSession): void {
-  if (
-    typeof session.captureTarget.hasPointerCapture !== 'function' ||
-    typeof session.captureTarget.releasePointerCapture !== 'function' ||
-    !session.captureTarget.hasPointerCapture(session.pointerId)
-  ) return
-  session.captureTarget.releasePointerCapture(session.pointerId)
+  try {
+    if (
+      typeof session.captureTarget.hasPointerCapture !== 'function' ||
+      typeof session.captureTarget.releasePointerCapture !== 'function' ||
+      !session.captureTarget.hasPointerCapture(session.pointerId)
+    ) return
+    session.captureTarget.releasePointerCapture(session.pointerId)
+  } catch {
+    // A detached/reconstructed SVG node may already have lost capture.
+  }
 }
 
 function updateGestureMovement(
@@ -255,6 +260,7 @@ export function GanttChart({
   const pendingDatesRef = useRef<ProvisionalGanttDates | null>(null)
   const gestureSessionRef = useRef<GanttGestureSession | null>(null)
   const suppressNextClickTaskIdRef = useRef<string | null>(null)
+  const gestureRecoveryFrameRef = useRef<number | null>(null)
   const previewOverlayFrameRef = useRef<number | null>(null)
   const directEditCompletionFrameRef = useRef<number | null>(null)
   const directEditSessionRef = useRef<DirectEditSession | null>(null)
@@ -353,6 +359,9 @@ export function GanttChart({
       }
       gestureSessionRef.current = null
       suppressNextClickTaskIdRef.current = null
+      if (gestureRecoveryFrameRef.current !== null) {
+        window.cancelAnimationFrame(gestureRecoveryFrameRef.current)
+      }
       if (previewOverlayFrameRef.current !== null) {
         window.cancelAnimationFrame(previewOverlayFrameRef.current)
       }
@@ -374,11 +383,12 @@ export function GanttChart({
       directEditPendingRef.current || Boolean(previewRef.current)
     )
     const consumeTaskClick = (taskPublicId: string): boolean => {
+      if (interactionLocked()) return true
       if (suppressNextClickTaskIdRef.current === taskPublicId) {
         suppressNextClickTaskIdRef.current = null
         return true
       }
-      return interactionLocked()
+      return false
     }
     chartRef.current = new Gantt(container, renderedTasks, {
       ...GANTT_SAFETY_OPTIONS,
@@ -431,7 +441,11 @@ export function GanttChart({
       }
       suppressNextClickTaskIdRef.current = null
       if (typeof hit.wrapper.setPointerCapture === 'function') {
-        hit.wrapper.setPointerCapture(event.pointerId)
+        try {
+          hit.wrapper.setPointerCapture(event.pointerId)
+        } catch {
+          // Document-level listeners below still complete the gesture safely.
+        }
       }
       gestureSessionRef.current = {
         pointerId: event.pointerId,
@@ -443,6 +457,7 @@ export function GanttChart({
         maximumMovement: 0,
         target: hit.target,
         crossedThreshold: false,
+        captureLost: false,
         captureTarget: hit.wrapper,
       }
     }
@@ -451,28 +466,74 @@ export function GanttChart({
       if (!session || session.pointerId !== event.pointerId) return
       updateGestureMovement(session, event)
     }
+    const scheduleGestureRecovery = (taskPublicId: string) => {
+      if (gestureRecoveryFrameRef.current !== null) {
+        window.cancelAnimationFrame(gestureRecoveryFrameRef.current)
+      }
+      gestureRecoveryFrameRef.current = window.requestAnimationFrame(() => {
+        gestureRecoveryFrameRef.current = null
+        if (
+          pendingDatesRef.current?.taskPublicId === taskPublicId ||
+          directEditPendingRef.current || previewRef.current
+        ) return
+        const currentChart = chartRef.current
+        const currentContainer = containerRef.current
+        const authoritativeTask = latestTasksRef.current.find(
+          (candidate) => candidate.id === taskPublicId,
+        )
+        if (currentChart && currentContainer && authoritativeTask) {
+          reconcileGanttTasks(
+            currentChart,
+            currentContainer,
+            [authoritativeTask],
+          )
+          schedulePreviewOverlay(currentContainer)
+        }
+      })
+    }
+    const completeGesture = (
+      session: GanttGestureSession,
+      suppressClick: boolean,
+      releaseCapture: boolean,
+      recoverGeometry: boolean,
+    ) => {
+      if (suppressClick) {
+        suppressNextClickTaskIdRef.current = session.taskPublicId
+      }
+      gestureSessionRef.current = null
+      if (releaseCapture) releaseGestureCapture(session)
+      if (recoverGeometry) scheduleGestureRecovery(session.taskPublicId)
+    }
     const finishGesture = (event: PointerEvent) => {
       const session = gestureSessionRef.current
       if (!session || session.pointerId !== event.pointerId) return
       updateGestureMovement(session, event)
-      if (session.target === 'right-resize' || session.crossedThreshold) {
-        suppressNextClickTaskIdRef.current = session.taskPublicId
-      }
-      releaseGestureCapture(session)
-      gestureSessionRef.current = null
+      completeGesture(
+        session,
+        session.target === 'right-resize' || session.crossedThreshold,
+        true,
+        !(event.target instanceof Node && container.contains(event.target)),
+      )
     }
     const cancelGesture = (event: PointerEvent) => {
       const session = gestureSessionRef.current
       if (!session || session.pointerId !== event.pointerId) return
-      if (session.target === 'right-resize' || session.crossedThreshold) {
-        suppressNextClickTaskIdRef.current = session.taskPublicId
-      }
-      releaseGestureCapture(session)
-      gestureSessionRef.current = null
+      completeGesture(
+        session,
+        session.target === 'right-resize' || session.crossedThreshold,
+        true,
+        true,
+      )
+    }
+    const loseGestureCapture = (event: PointerEvent) => {
+      const session = gestureSessionRef.current
+      if (!session || session.pointerId !== event.pointerId) return
+      session.captureLost = true
     }
     const suppressGestureClick = (event: MouseEvent) => {
       const hit = ganttGestureHit(container, event.target)
-      if (!hit || !consumeTaskClick(hit.taskPublicId)) return
+      if (!hit) return
+      if (event.isTrusted && !consumeTaskClick(hit.taskPublicId)) return
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation()
@@ -481,7 +542,11 @@ export function GanttChart({
     container.addEventListener('pointermove', moveGesture, true)
     container.addEventListener('pointerup', finishGesture, true)
     container.addEventListener('pointercancel', cancelGesture, true)
+    container.addEventListener('lostpointercapture', loseGestureCapture, true)
     container.addEventListener('click', suppressGestureClick, true)
+    document.addEventListener('pointermove', moveGesture, true)
+    document.addEventListener('pointerup', finishGesture, true)
+    document.addEventListener('pointercancel', cancelGesture, true)
 
     const finishInteraction = () => {
       const provisional = pendingDatesRef.current
@@ -565,14 +630,21 @@ export function GanttChart({
       container.removeEventListener('pointermove', moveGesture, true)
       container.removeEventListener('pointerup', finishGesture, true)
       container.removeEventListener('pointercancel', cancelGesture, true)
+      container.removeEventListener(
+        'lostpointercapture',
+        loseGestureCapture,
+        true,
+      )
       container.removeEventListener('click', suppressGestureClick, true)
+      document.removeEventListener('pointermove', moveGesture, true)
+      document.removeEventListener('pointerup', finishGesture, true)
+      document.removeEventListener('pointercancel', cancelGesture, true)
       scroller?.removeEventListener('scroll', handleHorizontalScroll)
       pendingDatesRef.current = null
       if (gestureSessionRef.current) {
         releaseGestureCapture(gestureSessionRef.current)
       }
       gestureSessionRef.current = null
-      suppressNextClickTaskIdRef.current = null
       if (scroller) scrollLeftRef.current = scroller.scrollLeft
       chartRef.current = null
       renderedTasksRef.current = new Map()
@@ -580,6 +652,10 @@ export function GanttChart({
       if (previewOverlayFrameRef.current !== null) {
         window.cancelAnimationFrame(previewOverlayFrameRef.current)
         previewOverlayFrameRef.current = null
+      }
+      if (gestureRecoveryFrameRef.current !== null) {
+        window.cancelAnimationFrame(gestureRecoveryFrameRef.current)
+        gestureRecoveryFrameRef.current = null
       }
       container.replaceChildren()
     }
@@ -609,8 +685,11 @@ export function GanttChart({
       releaseGestureCapture(gestureSessionRef.current)
     }
     gestureSessionRef.current = null
-    suppressNextClickTaskIdRef.current = null
   }, [previewSignature])
+
+  useLayoutEffect(() => {
+    suppressNextClickTaskIdRef.current = null
+  }, [scrollToStartToken])
 
   useLayoutEffect(() => {
     const chart = chartRef.current

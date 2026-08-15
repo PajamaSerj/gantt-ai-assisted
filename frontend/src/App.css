@@ -3,6 +3,7 @@
 .app-shell {
   min-height: 100vh;
   background: var(--app-background);
+  overflow-x: clip;
 }
 
 .toolbar {
