@@ -23,6 +23,9 @@ frontend/screenshots
 **/coverage
 **/.coverage
 tmp
+infra/yandex/config.psd1
+infra/yandex/*.local.json
+infra/yandex/.state
 .idea
 .vscode
 *.log

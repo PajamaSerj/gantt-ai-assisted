@@ -25,3 +25,8 @@ frontend/blob-report/
 .DS_Store
 Thumbs.db
 tmp/
+
+# Local Yandex Cloud delivery configuration/state
+infra/yandex/config.psd1
+infra/yandex/*.local.json
+infra/yandex/.state/

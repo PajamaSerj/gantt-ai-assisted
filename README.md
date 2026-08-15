@@ -3,7 +3,7 @@
 Deterministic planning-engine foundation for the AI Gantt Planner MVP described in
 `docs/AI_Gantt_Planner_Master_Brief_v1.3.md`.
 
-Implemented through Iteration 5.1:
+Implemented through Iteration 5.2:
 
 - a React + TypeScript + Vite application shell;
 - a stateless Python/FastAPI application with seed, import, apply, and export APIs;
@@ -31,9 +31,9 @@ Implemented through Iteration 5.1:
 - unit and API tests for this scope.
 
 Iteration 5.1 adds a single production container that serves the built React
-application and the FastAPI API from one Uvicorn process. Yandex Cloud deployment
-remains planned for a later iteration; no cloud environment is created or changed
-by the local container workflow.
+application and the FastAPI API from one Uvicorn process. Iteration 5.2 adds
+Human-operated, plan-first Yandex Cloud delivery automation. No cloud deployment
+is performed merely by cloning or testing this repository.
 
 ## Requirements
 
@@ -154,6 +154,11 @@ Optional parameters include `-ImageTag`, `-Port`, `-EnvFile`, `-SkipBuild`, and
 `-KeepContainer`. The baseline smoke does not require cloud credentials. If an
 environment file is supplied, keep it local; it is read only at container
 runtime and must not be committed.
+
+The reviewed Yandex Cloud bootstrap, immutable-SHA deploy, cloud smoke, and
+rollback workflow is documented in
+[`infra/yandex/README.md`](infra/yandex/README.md). Every mutating entry point
+requires explicit `-Apply`; bootstrap and deploy default to read-only plans.
 
 ## Excel input contract
 
